@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Ops AI</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f0f2f5;
+            color: #333;
+            min-height: 100vh;
+        }
+        nav {
+            background: #1a73e8;
+            color: white;
+            padding: 1rem 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+        }
+        nav .brand { font-size: 1.3rem; font-weight: 600; }
+        nav .brand span { color: #ffd700; }
+        nav .nav-links a {
+            color: white;
+            text-decoration: none;
+            margin-left: 1.5rem;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
+            transition: background 0.2s;
+        }
+        nav .nav-links a:hover { background: rgba(255,255,255,0.15); }
+        nav .login-btn {
+            background: white;
+            color: #1a73e8 !important;
+            font-weight: 600;
+        }
+        nav .login-btn:hover { background: #e8f0fe; }
+        .container { max-width: 1200px; margin: 2rem auto; padding: 0 1rem; }
+        .card {
+            background: white;
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+        }
+        .card h2 { margin-bottom: 1rem; color: #1a73e8; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 1rem; }
+        .stat {
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            color: white;
+            padding: 1.5rem;
+            border-radius: 10px;
+            text-align: center;
+        }
+        .stat .number { font-size: 2rem; font-weight: 700; }
+        .stat .label { font-size: 0.9rem; opacity: 0.9; margin-top: 0.3rem; }
+        .stat.green { background: linear-gradient(135deg, #34a853, #1e7e34); }
+        .stat.orange { background: linear-gradient(135deg, #fbbc04, #ea8600); }
+        .stat.red { background: linear-gradient(135deg, #ea4335, #c5221f); }
+        .btn {
+            display: inline-block;
+            padding: 0.6rem 1.2rem;
+            border-radius: 8px;
+            text-decoration: none;
+            font-weight: 500;
+            border: none;
+            cursor: pointer;
+            font-size: 0.9rem;
+        }
+        .btn-primary { background: #1a73e8; color: white; }
+        .btn-primary:hover { background: #1557b0; }
+        .form-group { margin-bottom: 1rem; }
+        .form-group label { display: block; margin-bottom: 0.4rem; font-weight: 500; }
+        .form-group input, .form-group select, .form-group textarea {
+            width: 100%;
+            padding: 0.65rem;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            font-size: 0.95rem;
+        }
+        .form-group input:focus { outline: none; border-color: #1a73e8; box-shadow: 0 0 0 3px rgba(26,115,232,0.15); }
+        .form-inline { display: flex; gap: 1rem; align-items: end; flex-wrap: wrap; }
+        .form-inline .form-group { flex: 1; min-width: 150px; }
+        .alert {
+            padding: 1rem;
+            border-radius: 8px;
+            margin-bottom: 1rem;
+        }
+        .alert-info { background: #e8f0fe; color: #1a73e8; border: 1px solid #c2d7f8; }
+        .actions { display: flex; gap: 1rem; flex-wrap: wrap; margin-top: 1rem; }
+        .product-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 0.8rem; }
+        .product-card {
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 1rem;
+            text-align: center;
+            border: 1px solid #eee;
+        }
+        .product-card .code { font-weight: 700; color: #1a73e8; font-size: 1.1rem; }
+        .product-card .rate { font-size: 1.2rem; color: #34a853; margin-top: 0.3rem; }
+        .product-card .desc { font-size: 0.85rem; color: #666; margin-top: 0.2rem; }
+        @media (max-width: 768px) {
+            nav { flex-direction: column; gap: 0.5rem; }
+            .form-inline { flex-direction: column; }
+        }
+    </style>
+</head>
+<body>
+    <nav>
+        <div class="brand">Admin Ops <span>AI</span></div>
+        <div class="nav-links">
+            <a href="/">Dashboard</a>
+            <!--USERS-->
+        </div>
+    </nav>
+    <div class="container">
+
+        <div class="alert alert-info">
+            <strong>Welcome to Admin Ops AI!</strong>
+            Factory accounting system | Date: {{ today }}
+        </div>
+
+        <div class="grid">
+            <div class="stat">
+                <div class="number">{{ daily_total }}</div>
+                <div class="label">Today's Net Total</div>
+            </div>
+            <div class="stat green">
+                <div class="number">{{ daily_workers }}</div>
+                <div class="label">Workers Today</div>
+            </div>
+            <div class="stat orange">
+                <div class="number">{{ daily_pieces }}</div>
+                <div class="label">Pieces Today</div>
+            </div>
+            <div class="stat red">
+                <div class="number">{{ daily_entries }}</div>
+                <div class="label">Entries Today</div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>Record Work</h2>
+            <div id="record-form">
+                <div class="form-inline">
+                    <div class="form-group">
+                        <label>Worker</label>
+                        <input type="text" id="worker" placeholder="Ahmed" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Product</label>
+                        <select id="product" required>
+                            <option value="BOLT-10x20">BOLT-10x20 - Rs 2.0</option>
+                            <option value="BOLT-6x25">BOLT-6x25 - Rs 1.5</option>
+                            <option value="BOLT-6x30">BOLT-6x30 - Rs 2.5</option>
+                            <option value="NUT-STD">NUT-STD - Rs 1.0</option>
+                            <option value="NUT-M10">NUT-M10 - Rs 1.2</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Quantity</label>
+                        <input type="number" id="quantity" min="1" value="1">
+                    </div>
+                    <button class="btn btn-primary" onclick="recordWork()">Record</button>
+                </div>
+            </div>
+            <div id="record-result" style="margin-top:1rem; display:none;" class="alert alert-info"></div>
+        </div>
+
+        <div class="card">
+            <h2>Quick Record from Text</h2>
+            <p style="color:#666; margin-bottom:1rem;">Type like: "Ahmed ne 50 bolt 10*20 aur 30 nuts kiye"</p>
+            <div style="display:flex; gap:1rem;">
+                <input type="text" id="text-input" placeholder="e.g., Ahmed ne 50 bolt 10*20 kiye" style="flex:1; padding:0.65rem; border:1px solid #ddd; border-radius:8px; font-size:0.95rem;">
+                <button class="btn btn-primary" onclick="recordText()">Parse & Record</button>
+            </div>
+            <div id="text-result" style="margin-top:1rem; display:none;" class="alert alert-info"></div>
+        </div>
+
+        <div class="card">
+            <h2>Today's Workers</h2>
+            <div id="workers-list">{{ daily_workers_list }}</div>
+        </div>
+
+        <div class="card">
+            <h2>Product Catalog</h2>
+            <div class="product-grid">
+                <div class="product-card"><div class="code">BOLT-10x20</div><div class="rate">Rs 2.0/pc</div><div class="desc">10*20 Bolt buff</div></div>
+                <div class="product-card"><div class="code">BOLT-6x25</div><div class="rate">Rs 1.5/pc</div><div class="desc">6*25 Bolt buff</div></div>
+                <div class="product-card"><div class="code">BOLT-6x30</div><div class="rate">Rs 2.5/pc</div><div class="desc">6*30 Bolt buff</div></div>
+                <div class="product-card"><div class="code">NUT-STD</div><div class="rate">Rs 1.0/pc</div><div class="desc">Steering Nut buff</div></div>
+                <div class="product-card"><div class="code">NUT-M10</div><div class="rate">Rs 1.2/pc</div><div class="desc">M10 Nut buff</div></div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>Quick Actions</h2>
+            <div class="actions">
+                <a href="/daily" class="btn btn-primary" target="_blank">Daily Report (JSON)</a>
+                <a href="/monthly" class="btn btn-primary" target="_blank">Monthly Summary</a>
+                <a href="/workers" class="btn btn-primary" target="_blank">All Workers</a>
+                <a href="/products" class="btn btn-primary" target="_blank">Product Catalog (JSON)</a>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        async function recordWork() {
+            const worker = document.getElementById('worker').value;
+            const product = document.getElementById('product').value;
+            const qty = document.getElementById('quantity').value;
+            if (!worker || !qty) return alert('Fill all fields');
+
+            const res = await fetch('/record', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+                body: new URLSearchParams({worker, product_code: product, quantity: qty})
+            });
+            const data = await res.json();
+            const el = document.getElementById('record-result');
+            el.style.display = 'block';
+            el.className = data.error ? 'alert alert-error' : 'alert alert-info';
+            el.textContent = data.error || `Recorded! ${worker}: ${qty}x${product} = Net Rs ${data.net}`;
+        }
+
+        async function recordText() {
+            const text = document.getElementById('text-input').value;
+            if (!text) return alert('Enter text');
+
+            const res = await fetch('/record-text', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+                body: new URLSearchParams({text})
+            });
+            const data = await res.json();
+            const el = document.getElementById('text-result');
+            el.style.display = 'block';
+            el.className = 'alert alert-info';
+            el.textContent = data.error || `Recorded ${data.entries} entries for ${data.worker}. Total Net: Rs ${data.total_net}`;
+        }
+    </script>
+</body>
+</html>

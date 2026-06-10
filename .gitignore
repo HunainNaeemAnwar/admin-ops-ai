@@ -1,0 +1,19 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Runtime data (auto-created by the app)
+data/daily_logs/
+data/tokens/
+data/pay_slips/
+logs/
+
+# Environment variables
+.env
