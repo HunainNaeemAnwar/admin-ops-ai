@@ -5,15 +5,51 @@ build/
 dist/
 wheels/
 *.egg-info
+*.egg
+*.whl
 
 # Virtual environments
 .venv
+venv/
+env/
+
+# Test & coverage
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+.cache/
+.mypy_cache/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
 
 # Runtime data (auto-created by the app)
 data/daily_logs/
 data/tokens/
 data/pay_slips/
+data/admin_ops.db
+data/agent_memory.db
+data/agent_memory/
 logs/
 
 # Environment variables
 .env
+.env.*
+
+# AI agent training / project management
+.specify/
+.opencode/
+AGENTS.md
+opencode.md
+test_prompt.txt
+history/
+
+# PDF & large binary files
+*.pdf
+*.xlsx

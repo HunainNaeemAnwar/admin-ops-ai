@@ -152,3 +152,8 @@ def delete_token(email: str):
 
 def has_token(email: str) -> bool:
     return load_token(email) is not None
+
+
+def is_father_email(email: str) -> bool:
+    from config import FATHER_EMAIL
+    return email == FATHER_EMAIL

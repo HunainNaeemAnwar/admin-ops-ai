@@ -140,6 +140,33 @@ def _build_worker_sheet(wb, worker: str, year: int, month: int):
         cell.alignment = Alignment(horizontal="center")
         cell.border = thin
 
+    reject_row = total_row + 2
+    ws.cell(row=reject_row, column=1, value="REJECT").font = Font(bold=True, color="FF0000")
+    ws.cell(row=reject_row, column=1).alignment = center
+    ws.cell(row=reject_row, column=1).border = thin
+
+    net_row = reject_row + 2
+    ws.cell(row=net_row, column=1, value="NET").font = bold
+    ws.cell(row=net_row, column=1).alignment = center
+    ws.cell(row=net_row, column=1).border = thin
+    for c in range(2, COL_COUNT + 1):
+        total_cell = ws.cell(row=total_row, column=c)
+        reject_cell = ws.cell(row=reject_row, column=c)
+        net_cell = ws.cell(row=net_row, column=c)
+        total_ref = f"{_col_letter(c)}{total_row}"
+        reject_ref = f"{_col_letter(c)}{reject_row}"
+        net_cell.value = f"={total_ref}-{reject_ref}"
+        net_cell.font = bold
+        net_cell.alignment = Alignment(horizontal="center")
+        net_cell.border = thin
+
+    for c in range(2, COL_COUNT + 1):
+        cell = ws.cell(row=reject_row, column=c)
+        cell.value = 0
+        cell.border = thin
+        cell.alignment = Alignment(horizontal="center")
+        cell.font = Font(color="FF0000")
+
     ws.column_dimensions["A"].width = 14
     for c_letter in ["B", "C", "D", "E", "F"]:
         ws.column_dimensions[c_letter].width = 12
@@ -207,6 +234,57 @@ def append_work_entry(
     wb.save(path)
 
 
+def record_rejection(
+    worker: str,
+    product_code: str,
+    description: str,
+    quantity: int,
+    rate: float,
+    gross: float,
+    tax_pct: float,
+    tax_amt: float,
+    net: float,
+    entry_date: Optional[str] = None,
+):
+    if entry_date is None:
+        entry_date = date.today().isoformat()
+    dt = date.fromisoformat(entry_date)
+    year, month = dt.year, dt.month
+    path = _get_monthly_path(year, month)
+    if not path.exists():
+        create_monthly_file(year, month)
+    wb = openpyxl.load_workbook(path)
+
+    ws_data = wb[DATA_SHEET]
+    if ws_data.max_row > 1:
+        last_id = ws_data.cell(row=ws_data.max_row, column=1).value
+        entry_id = (last_id or 0) + 1
+    else:
+        entry_id = 1
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    neg_qty = -abs(quantity)
+    neg_gross = -abs(gross)
+    neg_net = -abs(net)
+    ws_data.append([
+        entry_id, entry_date, worker, product_code,
+        f"REJECT: {description}",
+        neg_qty, rate, neg_gross, tax_pct, tax_amt, neg_net, now,
+    ])
+
+    ws_worker = _get_or_create_worker_sheet(wb, worker, year, month)
+    days = monthrange(year, month)[1]
+    reject_row = 10 + days + 4
+    col_name = _product_to_template_col(product_code)
+    if col_name:
+        col_idx = TEMPLATE_COLS.index(col_name) + 1
+        current = ws_worker.cell(row=reject_row, column=col_idx).value or 0
+        ws_worker.cell(row=reject_row, column=col_idx).value = current + abs(quantity)
+
+    _update_total_sheet(wb, year, month)
+    wb.save(path)
+
+
 def _update_total_sheet(wb, year: int, month: int):
     if TOTAL_SHEET not in wb.sheetnames:
         ws = wb.create_sheet(TOTAL_SHEET)
@@ -228,13 +306,13 @@ def _update_total_sheet(wb, year: int, month: int):
     for i, w_name in enumerate(sorted(worker_sheets)):
         row_num = i + 2
         days = monthrange(year, month)[1]
-        total_row = 10 + days + 2
+        net_row = 10 + days + 6
         sheet_ref = f"'{w_name}'"
 
         ws.cell(row=row_num, column=1, value=w_name).border = thin
         for c in range(2, total_cols + 1):
             cell = ws.cell(row=row_num, column=c)
-            cell.value = f"={sheet_ref}!{_col_letter(c)}{total_row}"
+            cell.value = f"={sheet_ref}!{_col_letter(c)}{net_row}"
             cell.border = thin
             cell.alignment = center
 
@@ -347,3 +425,24 @@ def lookup_product(product_code: str) -> dict | None:
         if code_lower in p["product_code"].lower():
             return p
     return None
+
+
+def update_product_rate(product_code: str, new_rate: float) -> dict:
+    if not PRODUCT_CATALOG_PATH.exists():
+        return {"error": "Product catalog not found"}
+    wb = openpyxl.load_workbook(PRODUCT_CATALOG_PATH)
+    ws = wb.active
+    code_lower = product_code.strip().lower()
+    for row in ws.iter_rows(min_row=2, max_row=ws.max_row):
+        cell = row[0]
+        if cell.value and str(cell.value).strip().lower() == code_lower:
+            old_rate = row[2].value
+            row[2].value = new_rate
+            wb.save(PRODUCT_CATALOG_PATH)
+            return {
+                "product_code": str(cell.value).strip(),
+                "description": str(row[1].value or "").strip(),
+                "old_rate": old_rate,
+                "new_rate": new_rate,
+            }
+    return {"error": f"Product '{product_code}' not found in catalog"}
