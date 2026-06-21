@@ -1,16 +1,20 @@
 from datetime import date, datetime
 from pathlib import Path
 
-from fastapi import APIRouter, Request, HTTPException
+from fastapi import APIRouter, Request, HTTPException, Depends
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from config import BASE_DIR
-from tools.excel_tools import load_product_catalog, get_all_workers, get_worker_entries
-from tools.calc_tools import calc_daily_summary, calc_monthly_summary
+from config import BASE_DIR, FATHER_EMAIL
+from tools.database import (
+    get_db, get_all_workers, get_all_products, get_logs_for_date,
+    get_worker_id, get_worker_month_production, get_daily_totals,
+)
 from tools.oauth_tools import (
     get_authorization_url, exchange_code, save_token,
-    list_authorized_users, delete_token,
+    list_authorized_users, delete_token, get_valid_credentials,
+    is_father_email,
 )
+from tools.production_tools import log_production_json, calc_piece_rate, get_product_info
 
 router = APIRouter()
 
@@ -43,34 +47,55 @@ def _render(template_name: str, **kwargs) -> str:
         else:
             html = html.replace(placeholder, str(val) if val is not None else "")
 
+    users = kwargs.get("users", [])
     if "users" in kwargs:
-        users = kwargs["users"]
         if users:
-            html = html.replace("<!--USERS-->", f'<a href="#" style="opacity:0.9;">{users[0]}</a><a href="/logout?email={users[0]}" style="color:#ffd700;">Logout</a>')
+            email = users[0]
+            father_tag = " ⭐" if is_father_email(email) else ""
+            html = html.replace(
+                "<!--USERS-->",
+                f'<span style="opacity:0.9;">{email}{father_tag}</span>'
+                f'<a href="/logout?email={email}" style="color:#ffd700;">Logout</a>'
+            )
         else:
-            html = html.replace("<!--USERS-->", '<a href="/login" class="login-btn">Sign in with Google</a>')
-
+            html = html.replace(
+                "<!--USERS-->",
+                '<a href="/login" class="login-btn">Sign in with Google</a>'
+            )
     return html
 
+
+def get_current_user(request: Request) -> str | None:
+    users = list_authorized_users()
+    return users[0] if users else None
+
+
+def require_father(user: str | None):
+    if not user or not is_father_email(user):
+        raise HTTPException(403, "Only father can perform this action")
+
+
+# ── Public Routes ───────────────────────────────────
 
 @router.get("/", response_class=HTMLResponse)
 async def index(request: Request):
     users = list_authorized_users()
     today = date.today()
-    try:
-        daily = calc_daily_summary(today.year, today.month, today.day)
-    except Exception:
-        daily = None
+
+    logs = get_logs_for_date(today.isoformat())
+    present = set(l["worker_name"] for l in logs if l["status"] == "present")
+    totals = get_daily_totals(today.isoformat())
+    total_pieces = sum(totals.values())
 
     return _render(
         "index.html",
         today=today.isoformat(),
         users=users,
-        daily_total=f'Rs {daily["total_net"]:,.2f}' if daily else "0",
-        daily_workers=str(daily["workers_count"]) if daily else "0",
-        daily_pieces=str(daily["total_pieces"]) if daily else "0",
-        daily_entries=str(daily["entries_count"]) if daily else "0",
-        daily_workers_list=", ".join(daily["workers"]) if daily and daily.get("workers") else "None",
+        daily_total=f"Rs {total_pieces * 0:,.2f}",
+        daily_workers=str(len(present)),
+        daily_pieces=str(total_pieces),
+        daily_entries=str(len(logs)),
+        daily_workers_list=", ".join(sorted(present)) or "None",
     )
 
 
@@ -115,27 +140,43 @@ async def daily_report(year: int = None, month: int = None, day: int = None):
     y = year or today.year
     m = month or today.month
     d = day or today.day
-    try:
-        return calc_daily_summary(y, m, d)
-    except Exception as e:
-        return {"error": str(e)}
+    date_str = f"{y}-{m:02d}-{d:02d}"
+    logs = get_logs_for_date(date_str)
+    totals = get_daily_totals(date_str)
+    return {
+        "date": date_str,
+        "entries": [dict(l) for l in logs],
+        "totals": totals,
+        "total_pieces": sum(totals.values()),
+    }
 
 
 @router.get("/monthly")
 async def monthly_report(year: int = None, month: int = None):
     today = date.today()
-    y = year or today.month
+    y = year or today.year
     m = month or today.month
-    return calc_monthly_summary(y, m)
+    workers = get_all_workers()
+    products = get_all_products()
+    product_codes = [p["code"] for p in products]
+    worker_data = []
+    grand_totals = {code: 0 for code in product_codes}
+    for w in workers:
+        entries = get_worker_month_production(w["id"], y, m)
+        worker_totals = {}
+        for e in entries:
+            code = e["product_code"]
+            worker_totals[code] = worker_totals.get(code, 0) + e["quantity"]
+            grand_totals[code] = grand_totals.get(code, 0) + e["quantity"]
+        if worker_totals:
+            worker_data.append({"worker": w["name"], "totals": worker_totals})
+    return {"year": y, "month": m, "workers": worker_data, "grand_totals": grand_totals}
 
 
 @router.get("/workers")
-async def workers_list(year: int = None, month: int = None):
-    today = date.today()
-    y = year or today.month
-    m = month or today.month
-    workers = get_all_workers(y, m)
-    return {"workers": workers, "year": y, "month": m}
+async def workers_list():
+    workers = get_all_workers()
+    return {"workers": [w["name"] for w in workers]}
 
 
 @router.get("/worker/{worker}")
@@ -143,51 +184,84 @@ async def worker_detail(worker: str, year: int = None, month: int = None):
     today = date.today()
     y = year or today.year
     m = month or today.month
-    entries = get_worker_entries(worker, y, m)
-    from tools.calc_tools import calc_worker_payslip
-    payslip = calc_worker_payslip(worker, y, m)
-    return {"worker": worker, "entries": entries, "payslip": payslip}
-
-
-@router.post("/record")
-async def record_work(worker: str, product_code: str, quantity: int):
-    from tools.calc_tools import calc_piece_rate
-    from tools.excel_tools import append_work_entry
-    result = calc_piece_rate(product_code, quantity)
-    if "error" in result:
-        return {"error": result["error"]}
-    append_work_entry(
-        worker=worker, product_code=result["product_code"],
-        description=result["description"], quantity=result["quantity"],
-        rate=result["rate"], gross=result["gross"],
-        tax_pct=result["tax_pct"], tax_amt=result["tax_amt"], net=result["net"],
-    )
-    return {"status": "ok", "net": result["net"], "gross": result["gross"]}
-
-
-@router.post("/record-text")
-async def record_work_text(text: str):
-    import asyncio
-    from agent_system.data_extractor import extract_from_text
-    from tools.calc_tools import calc_piece_rate
-    from tools.excel_tools import append_work_entry
-
-    parsed = await extract_from_text(text)
-    results = []
-    for prod in parsed.products:
-        result = calc_piece_rate(prod.product_code, prod.quantity)
-        if "error" not in result:
-            append_work_entry(
-                worker=parsed.worker, product_code=result["product_code"],
-                description=result["description"], quantity=result["quantity"],
-                rate=result["rate"], gross=result["gross"],
-                tax_pct=result["tax_pct"], tax_amt=result["tax_amt"], net=result["net"],
-            )
-            results.append(result)
-    total_net = sum(r["net"] for r in results)
-    return {"worker": parsed.worker, "entries": len(results), "total_net": total_net, "details": results}
+    wid = get_worker_id(worker)
+    if not wid:
+        raise HTTPException(404, f"Worker '{worker}' not found")
+    entries = get_worker_month_production(wid, y, m)
+    return {"worker": worker, "year": y, "month": m, "entries": entries}
 
 
 @router.get("/products")
 async def products():
-    return {"products": load_product_catalog()}
+    return {"products": get_all_products()}
+
+
+# ── Father-Only Routes ──────────────────────────────
+
+@router.post("/record")
+async def record_work(worker: str, product_code: str, quantity: int, request: Request):
+    user = get_current_user(request)
+    require_father(user)
+    result = log_production_json(
+        f'[{{"worker":"{worker}","product_code":"{product_code}","quantity":{quantity}}}]'
+    )
+    return {"status": "ok", "message": result}
+
+
+@router.post("/record-text")
+async def record_work_text(text: str, request: Request):
+    user = get_current_user(request)
+    require_father(user)
+    return {"status": "error", "message": "Text input removed. Use /record with JSON or chat with the agent."}
+
+
+@router.post("/rejection")
+async def add_rejection(year: int, month: int, product_code: str, total_qty: int, excluded_workers: str = "[]", request: Request = None):
+    user = get_current_user(request)
+    require_father(user)
+    import json
+    from tools.rejection_tools import log_rejection as rej_log
+    excluded = json.loads(excluded_workers)
+    result = rej_log(year, month, product_code, total_qty, excluded)
+    return {"status": "ok", "message": result}
+
+
+@router.post("/advance")
+async def add_advance(worker: str, amount: float, year: int, month: int, description: str = "", request: Request = None):
+    user = get_current_user(request)
+    require_father(user)
+    from tools.advance_tools import record_advance as adv_rec
+    result = adv_rec(worker, amount, year, month, description)
+    return {"status": "ok", "message": result}
+
+
+@router.post("/payslip")
+async def generate_payslip(year: int, month: int, worker: str = "", request: Request = None):
+    user = get_current_user(request)
+    require_father(user)
+    from agent_system.orchestrator import generate_payslip_tool
+    result = generate_payslip_tool(year, month, worker or None)
+    return {"status": "ok", "message": result}
+
+
+@router.post("/email")
+async def send_email_report(period: str = "daily", year: int = None, month: int = None, day: int = None, request: Request = None):
+    user = get_current_user(request)
+    require_father(user)
+    from tools.email_tools import send_report
+    today = date.today()
+    y = year or today.year
+    m = month or today.month
+    d = day or today.day
+    result = send_report(period, y, m, d)
+    return {"status": "ok", "message": result}
+
+
+@router.post("/chat")
+async def agent_chat(text: str, request: Request = None):
+    user = get_current_user(request)
+    require_father(user)
+    import asyncio
+    from agent_system.orchestrator import chat
+    result = await asyncio.to_thread(asyncio.run, chat(text))
+    return {"status": "ok", "response": result}
