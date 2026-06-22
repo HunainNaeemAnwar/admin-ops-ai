@@ -1,16 +1,37 @@
 import sqlite3
+import threading
 from datetime import date
 from pathlib import Path
 from typing import Optional
 
 from config import DATABASE_URL
 
+_local = threading.local()
+
+
+def _is_conn_alive(conn: sqlite3.Connection) -> bool:
+    try:
+        conn.execute("SELECT 1")
+        return True
+    except sqlite3.ProgrammingError:
+        return False
+
+
+def close_db():
+    conn = getattr(_local, "conn", None)
+    if conn is not None:
+        conn.close()
+        _local.conn = None
+
 
 def get_db() -> sqlite3.Connection:
-    conn = sqlite3.connect(DATABASE_URL)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA foreign_keys=ON")
+    conn = getattr(_local, "conn", None)
+    if conn is None or not _is_conn_alive(conn):
+        conn = sqlite3.connect(DATABASE_URL)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA foreign_keys=ON")
+        _local.conn = conn
     return conn
 
 
@@ -91,7 +112,6 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_advances_worker_month ON advances(worker_id, year, month);
     """)
     conn.commit()
-    conn.close()
 
 
 # ── Workers ──────────────────────────────────────────
@@ -99,7 +119,6 @@ def init_db():
 def get_worker_id(name: str) -> Optional[int]:
     conn = get_db()
     row = conn.execute("SELECT id FROM workers WHERE name = ?", (name,)).fetchone()
-    conn.close()
     return row["id"] if row else None
 
 
@@ -111,21 +130,18 @@ def get_or_create_worker(name: str) -> int:
     cursor = conn.execute("INSERT INTO workers (name) VALUES (?)", (name,))
     conn.commit()
     wid = cursor.lastrowid
-    conn.close()
     return wid
 
 
 def get_all_workers() -> list[dict]:
     conn = get_db()
     rows = conn.execute("SELECT id, name, is_active FROM workers ORDER BY name").fetchall()
-    conn.close()
     return [dict(r) for r in rows]
 
 
 def get_active_workers() -> list[dict]:
     conn = get_db()
     rows = conn.execute("SELECT id, name FROM workers WHERE is_active = 1 ORDER BY name").fetchall()
-    conn.close()
     return [dict(r) for r in rows]
 
 
@@ -134,21 +150,18 @@ def get_active_workers() -> list[dict]:
 def get_product_id(code: str) -> Optional[int]:
     conn = get_db()
     row = conn.execute("SELECT id FROM products WHERE code = ?", (code,)).fetchone()
-    conn.close()
     return row["id"] if row else None
 
 
 def get_all_products() -> list[dict]:
     conn = get_db()
     rows = conn.execute("SELECT id, code, description, rate, tax_pct FROM products ORDER BY id").fetchall()
-    conn.close()
     return [dict(r) for r in rows]
 
 
 def get_product_rate(code: str) -> Optional[float]:
     conn = get_db()
     row = conn.execute("SELECT rate FROM products WHERE code = ?", (code,)).fetchone()
-    conn.close()
     return row["rate"] if row else None
 
 
@@ -165,10 +178,7 @@ def log_production(worker_id: int, product_id: int, quantity: int, entry_date: s
         conn.commit()
         return cursor.lastrowid
     except sqlite3.IntegrityError:
-        conn.close()
         raise
-    finally:
-        conn.close()
 
 
 def mark_absent(worker_id: int, entry_date: str) -> int:
@@ -182,10 +192,7 @@ def mark_absent(worker_id: int, entry_date: str) -> int:
         conn.commit()
         return cursor.lastrowid
     except sqlite3.IntegrityError:
-        conn.close()
         raise
-    finally:
-        conn.close()
 
 
 def update_entry(entry_id: int, quantity: int) -> bool:
@@ -196,7 +203,6 @@ def update_entry(entry_id: int, quantity: int) -> bool:
     )
     conn.commit()
     updated = cursor.rowcount > 0
-    conn.close()
     return updated
 
 
@@ -213,7 +219,6 @@ def get_logs_for_date(entry_date: str) -> list[dict]:
            ORDER BY w.name""",
         (entry_date,),
     ).fetchall()
-    conn.close()
     return [dict(r) for r in rows]
 
 
@@ -230,7 +235,6 @@ def get_logs_for_worker(worker_id: int, year: int, month: int) -> list[dict]:
            ORDER BY dl.entry_date""",
         (worker_id, start, end),
     ).fetchall()
-    conn.close()
     return [dict(r) for r in rows]
 
 
@@ -242,7 +246,6 @@ def ensure_day_complete(entry_date: str, worker_ids: list[int]) -> list[int]:
              WHERE entry_date = ? AND worker_id IN ({placeholders})""",
         [entry_date] + worker_ids,
     ).fetchall()
-    conn.close()
     recorded = {r["worker_id"] for r in rows}
     return [wid for wid in worker_ids if wid not in recorded]
 
@@ -260,7 +263,6 @@ def log_rejection(year: int, month: int, product_id: int, total_qty: int, exclud
     )
     conn.commit()
     rid = cursor.lastrowid
-    conn.close()
     return rid
 
 
@@ -276,7 +278,6 @@ def get_rejections_for_month(year: int, month: int) -> list[dict]:
            ORDER BY r.id""",
         (year, month),
     ).fetchall()
-    conn.close()
     result = []
     for r in rows:
         d = dict(r)
@@ -295,7 +296,6 @@ def get_worker_rejection_share(worker_name: str, year: int, month: int) -> dict[
            WHERE r.year = ? AND r.month = ?""",
         (year, month),
     ).fetchall()
-    conn.close()
 
     active = get_active_workers()
     active_names = [w["name"] for w in active]
@@ -324,7 +324,6 @@ def record_advance(worker_id: int, amount: float, year: int, month: int, descrip
     )
     conn.commit()
     aid = cursor.lastrowid
-    conn.close()
     return aid
 
 
@@ -337,7 +336,6 @@ def get_advances_for_worker_month(worker_id: int, year: int, month: int) -> list
            ORDER BY created_at""",
         (worker_id, year, month),
     ).fetchall()
-    conn.close()
     return [dict(r) for r in rows]
 
 
@@ -349,7 +347,6 @@ def get_total_advances_for_worker_month(worker_id: int, year: int, month: int) -
            WHERE worker_id = ? AND year = ? AND month = ?""",
         (worker_id, year, month),
     ).fetchone()
-    conn.close()
     return row["total"] if row else 0.0
 
 
@@ -370,7 +367,6 @@ def save_payslip(
     )
     conn.commit()
     pid = cursor.lastrowid
-    conn.close()
     return pid
 
 
@@ -381,7 +377,6 @@ def get_payslip(worker_id: int, year: int, month: int) -> Optional[dict]:
            WHERE worker_id = ? AND year = ? AND month = ?""",
         (worker_id, year, month),
     ).fetchone()
-    conn.close()
     return dict(row) if row else None
 
 
@@ -397,7 +392,6 @@ def get_daily_totals(entry_date: str) -> dict:
            GROUP BY p.code""",
         (entry_date,),
     ).fetchall()
-    conn.close()
     return {r["product_code"]: r["total_qty"] for r in rows}
 
 
@@ -413,5 +407,4 @@ def get_worker_month_production(worker_id: int, year: int, month: int) -> list[d
            ORDER BY dl.entry_date""",
         (worker_id, start, end),
     ).fetchall()
-    conn.close()
     return [dict(r) for r in rows]

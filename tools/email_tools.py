@@ -91,14 +91,13 @@ def _build_quantities_report(period: str, year: int, month: int, day: int) -> st
             d = monday + timedelta(days=i)
             ds = d.isoformat()
             totals = get_daily_totals(ds)
-            day_total = sum(totals.values())
-            if day_total > 0:
+            has_data = any(totals.values())
+            if has_data:
                 lines.append(f"{d.strftime('%A')} ({ds}):")
                 for code in product_codes:
                     qty = totals.get(code, 0)
                     if qty > 0:
                         lines.append(f"  {code}: {qty} pcs")
-                lines.append(f"  Day Total: {day_total} pcs")
                 lines.append("")
         if not any(get_daily_totals((monday + timedelta(days=i)).isoformat()) for i in range(7)):
             lines.append("  No production recorded for this week.")
@@ -125,7 +124,6 @@ def _build_quantities_report(period: str, year: int, month: int, day: int) -> st
                 qty = totals.get(code, 0)
                 if qty > 0:
                     lines.append(f"  {code}: {qty} pcs")
-            lines.append(f"  Total: {sum(totals.values())} pcs")
         else:
             lines.append("  No production recorded.")
 

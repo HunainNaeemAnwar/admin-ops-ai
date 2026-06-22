@@ -1,25 +1,20 @@
-# Python-generated files
+# Python
 __pycache__/
-*.py[oc]
-build/
-dist/
-wheels/
-*.egg-info
+*.py[co]
+*.pyc
+*.pyo
+*.egg-info/
 *.egg
+dist/
+build/
+wheels/
 *.whl
+*.so
 
-# Virtual environments
+# Virtual env
 .venv
 venv/
 env/
-
-# Test & coverage
-.coverage
-.coverage.*
-htmlcov/
-.pytest_cache/
-.cache/
-.mypy_cache/
 
 # IDE
 .vscode/
@@ -29,27 +24,39 @@ htmlcov/
 *~
 .DS_Store
 
-# Runtime data (auto-created by the app)
+# Env
+.env
+.env.*
+
+# Runtime data
 data/daily_logs/
 data/tokens/
 data/pay_slips/
 data/admin_ops.db
-data/agent_memory.db
 data/agent_memory/
+data/product_catalog.xlsx
+
+# Logs
 logs/
+*.log
 
-# Environment variables
-.env
-.env.*
+# Generated reports
+*.pdf
+*.xlsx
 
-# AI agent training / project management
+# AI / project config
 .specify/
 .opencode/
 AGENTS.md
 opencode.md
 test_prompt.txt
 history/
+summary.md
 
-# PDF & large binary files
-*.pdf
-*.xlsx
+# Test & coverage
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+.cache/
+.mypy_cache/

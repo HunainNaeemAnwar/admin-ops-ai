@@ -63,11 +63,10 @@ def _daily_summary(year: int, month: int, day: int) -> str:
     totals = get_daily_totals(date_str)
     logs = get_logs_for_date(date_str)
     present = set(l["worker_name"] for l in logs if l["status"] == "present")
-    total_pieces = sum(totals.values())
 
     lines = [
         f"Daily Summary - {date_str}",
-        f"Workers present: {len(present)} | Total pieces: {total_pieces}",
+        f"Workers present: {len(present)}",
     ]
     for code, qty in sorted(totals.items()):
         lines.append(f"  {code}: {qty} pcs")
@@ -87,10 +86,10 @@ def _weekly_summary(year: int, month: int, day: int) -> str:
         d = monday + timedelta(days=i)
         ds = d.isoformat()
         totals = get_daily_totals(ds)
-        day_total = sum(totals.values())
-        if day_total > 0:
+        has_data = any(totals.values())
+        if has_data:
             week_totals[ds] = totals
-            lines.append(f"  {d.strftime('%A')} ({ds}): {day_total} pcs")
+            lines.append(f"  {d.strftime('%A')} ({ds}):")
             for code, qty in sorted(totals.items()):
                 lines.append(f"    {code}: {qty}")
 
@@ -105,9 +104,6 @@ def _monthly_summary(year: int, month: int) -> str:
     products = get_all_products()
     product_codes = [p["code"] for p in products]
 
-    grand_totals = {code: 0 for code in product_codes}
-    total_pieces = 0
-
     for w in workers:
         wid = w["id"]
         from tools.database import get_worker_month_production
@@ -117,15 +113,6 @@ def _monthly_summary(year: int, month: int) -> str:
             for e in entries:
                 code = e["product_code"]
                 worker_totals[code] = worker_totals.get(code, 0) + e["quantity"]
-            worker_total = sum(worker_totals.values())
-            total_pieces += worker_total
             parts = [f"{code}: {qty}" for code, qty in sorted(worker_totals.items())]
-            lines.append(f"  {w['name']}: {worker_total} pcs ({', '.join(parts)})")
-            for code, qty in worker_totals.items():
-                grand_totals[code] += qty
-
-    lines.append(f"\nGrand Total: {total_pieces} pieces")
-    for code in product_codes:
-        if grand_totals[code] > 0:
-            lines.append(f"  {code}: {grand_totals[code]} pcs")
+            lines.append(f"  {w['name']}: {', '.join(parts)}")
     return "\n".join(lines)

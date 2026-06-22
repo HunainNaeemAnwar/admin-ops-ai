@@ -136,3 +136,128 @@ def update_entry(entry_id: int, new_quantity: int, reason: str = "") -> str:
     if reason:
         msg += f" ({reason})"
     return msg
+
+
+PRODUCT_COLUMNS = {"NUT", "6*30", "6*25", "10*20", "10*25"}
+CODE_ALIASES = {"6×30": "6*30", "6x30": "6*30", "6×25": "6*25", "6x25": "6*25",
+                "10×20": "10*20", "10x20": "10*20", "10×25": "10*25", "10x25": "10*25"}
+
+
+def _normalize_code(code: str) -> str:
+    return CODE_ALIASES.get(code, code)
+
+
+def parse_table_to_production(worker: str, table_text: str) -> str:
+    """Parse an ASCII production table and record all entries.
+
+    Table format (pipe-separated):
+    │ DATE │ NUT │ 6×30 │ 6×25 │ 10×20 │
+    │ 6/2/2026 │ 850 │ 5200 │ 0 │ 0 │
+
+    Columns can be NUT, 6*30, 6*25, 10*20, 10*25 (or 6×30/6x30 etc.)
+    """
+    import re
+    lines = table_text.strip().split("\n")
+    header_line = None
+    data_lines = []
+    in_table = False
+
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped == "│":
+            continue
+        # Detect header row (contains DATE or date-like columns)
+        if re.search(r'DATE|NUT|6[×x*]30|6[×x*]25|10[×x*]20|10[×x*]25', stripped, re.IGNORECASE):
+            header_line = stripped
+            in_table = True
+            continue
+        # Stop only at actual bottom border (└ or ┴ or ┘ characters)
+        if re.match(r'[└┴┘]+', stripped):
+            in_table = False
+            continue
+        if in_table:
+            # Skip decorative lines (only box-drawing characters and dashes)
+            if re.match(r'[├┼┤┬┌┐─═\s]+$', stripped):
+                continue
+            # Parse pipe-separated row
+            parts = [p.strip() for p in stripped.split("│") if p.strip()]
+            if len(parts) >= 2:
+                data_lines.append(parts)
+
+    if not header_line or not data_lines:
+        return "Could not parse table — no header or data rows found."
+
+    # Extract column headers
+    header_parts = [p.strip() for p in header_line.split("│") if p.strip()]
+    col_map = {}  # index in row -> product code
+    for i, h in enumerate(header_parts):
+        h_upper = h.upper().replace("*", "").replace("×", "").replace("X", "")
+        if h_upper == "DATE":
+            col_map[i] = "date"
+        elif _normalize_code(h) in PRODUCT_COLUMNS:
+            col_map[i] = _normalize_code(h)
+
+    product_cols = {i: code for i, code in col_map.items() if code != "date"}
+    date_col = next((i for i, v in col_map.items() if v == "date"), None)
+    if date_col is None:
+        return "Could not find DATE column in table."
+
+    results = []
+    for row_parts in data_lines:
+        if len(row_parts) <= max(col_map.keys()):
+            continue
+        date_str = row_parts[date_col].strip()
+        # Normalize date format
+        date_str = date_str.replace("/", "-")
+        try:
+            from datetime import datetime
+            if "-" in date_str:
+                dt = datetime.strptime(date_str, "%m-%d-%Y")
+            else:
+                continue
+            iso_date = dt.strftime("%Y-%m-%d")
+        except ValueError:
+            try:
+                from datetime import datetime
+                dt = datetime.strptime(date_str, "%m/%d/%Y")
+                iso_date = dt.strftime("%Y-%m-%d")
+            except ValueError:
+                results.append(f"  Skipped {date_str}: bad date")
+                continue
+
+        has_data = False
+        date_results = []
+        for col_idx, product_code in product_cols.items():
+            try:
+                qty = int(row_parts[col_idx].strip().replace(",", ""))
+            except (ValueError, IndexError):
+                continue
+            if qty <= 0:
+                continue
+            has_data = True
+            wid = get_or_create_worker(worker)
+            pid = get_product_info(product_code)
+            if pid:
+                try:
+                    db_log(wid, pid["id"], qty, iso_date)
+                except sqlite3.IntegrityError:
+                    row = get_db().execute(
+                        "SELECT id FROM daily_log WHERE worker_id = ? AND product_id = ? AND entry_date = ?",
+                        (wid, pid["id"], iso_date),
+                    ).fetchone()
+                    if row:
+                        db_update(row["id"], qty)
+                        date_results.append(f"{qty}x{product_code} (updated)")
+                    else:
+                        date_results.append(f"{qty}x{product_code} (skipped)")
+                    continue
+                date_results.append(f"{qty}x{product_code}")
+
+        if has_data:
+            results.append(f"  {iso_date}: {', '.join(date_results)}")
+        else:
+            results.append(f"  {iso_date}: no data")
+
+    if not results:
+        return "No valid data found in table."
+    return "\n".join(results)

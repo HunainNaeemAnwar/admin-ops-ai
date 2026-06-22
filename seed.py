@@ -22,9 +22,14 @@ def seed():
     ]
     for code, desc, rate in products:
         cursor.execute(
-            "INSERT OR IGNORE INTO products (code, description, rate, tax_pct) VALUES (?, ?, ?, ?)",
-            (code, desc, rate, TAX_PERCENTAGE),
+            "UPDATE products SET rate = ?, description = ?, tax_pct = ? WHERE code = ?",
+            (rate, desc, TAX_PERCENTAGE, code),
         )
+        if cursor.rowcount == 0:
+            cursor.execute(
+                "INSERT INTO products (code, description, rate, tax_pct) VALUES (?, ?, ?, ?)",
+                (code, desc, rate, TAX_PERCENTAGE),
+            )
 
     conn.commit()
     conn.close()
