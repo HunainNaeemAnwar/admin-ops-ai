@@ -5,14 +5,17 @@ from datetime import date, datetime
 from dotenv import load_dotenv
 load_dotenv()
 
-from config import GEMINI_API_KEY, GMAIL_CLIENT_ID
+from config import CEREBRAS_API_KEY, OPENAI_API_KEY, GMAIL_CLIENT_ID
 
 
 def check_config():
-    if not GEMINI_API_KEY or GEMINI_API_KEY == "your_gemini_api_key_here":
-        print("ERROR: GEMINI_API_KEY not set in .env file!")
-        print("Edit .env and add your Gemini API key.")
+    if not CEREBRAS_API_KEY or CEREBRAS_API_KEY == "your_cerebras_api_key_here":
+        print("ERROR: CEREBRAS_API_KEY not set in .env file!")
+        print("Edit .env and add your Cerebras API key.")
         return False
+    if not OPENAI_API_KEY:
+        print("WARNING: OPENAI_API_KEY not set — tracing will not be exported to OpenAI dashboard.")
+        print("Set OPENAI_API_KEY in .env to view traces at https://platform.openai.com/traces.")
     return True
 
 
@@ -58,6 +61,7 @@ def main():
         print("Memory commands:")
         print('  /memory status   - Check memory size')
         print('  /memory compact  - Compact memory (keep last 2 exchanges)')
+        print('  /memory cleanup  - Remove corrupted/tool messages')
         print('  /memory delete   - Delete all memory (fresh start)')
         print()
         print("Examples:")
@@ -83,16 +87,21 @@ def main():
                         cmd = parts[1] if len(parts) > 1 else ""
                         mem = _get_memory(sid)
                         if cmd == "status":
-                            count = await mem.turn_count()
-                            print(f"\n[Memory: {count} items in session '{sid}']")
+                            items = await mem._session.get_items()
+                            count = len(items)
+                            tokens = sum(len(str(i)) for i in items) // 4
+                            print(f"\n[Memory: {count} items, ~{tokens} tokens in session '{sid}']")
                         elif cmd == "compact":
                             result = await mem.compact()
                             print(f"\n[Memory: {result}]")
                         elif cmd == "delete":
                             result = await mem.delete()
                             print(f"\n[Memory: {result}]")
+                        elif cmd == "cleanup":
+                            result = await mem.cleanup()
+                            print(f"\n[Memory: {result}]")
                         else:
-                            print("\n[Memory: Unknown command. Use: /memory status | compact | delete]")
+                            print("\n[Memory: Unknown command. Use: /memory status | compact | delete | cleanup]")
                         continue
 
                     print("\nAccountant Agent: Thinking...")

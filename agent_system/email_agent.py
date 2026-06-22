@@ -2,7 +2,7 @@ import agent_system.provider
 
 from agents import Agent, Runner, AgentOutputSchema
 from pydantic import BaseModel, Field
-from config import GEMINI_MODEL
+from agent_system.provider import ACTIVE_MODEL
 
 
 class EmailContent(BaseModel):
@@ -16,7 +16,7 @@ email_writer_agent = Agent(
         "You write professional email content for daily production summaries. "
         "Keep it concise and professional. Address the manager respectfully."
     ),
-    model=GEMINI_MODEL,
+    model=ACTIVE_MODEL,
     output_type=AgentOutputSchema(EmailContent, strict_json_schema=True),
 )
 

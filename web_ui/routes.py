@@ -160,17 +160,15 @@ async def monthly_report(year: int = None, month: int = None):
     products = get_all_products()
     product_codes = [p["code"] for p in products]
     worker_data = []
-    grand_totals = {code: 0 for code in product_codes}
     for w in workers:
         entries = get_worker_month_production(w["id"], y, m)
         worker_totals = {}
         for e in entries:
             code = e["product_code"]
             worker_totals[code] = worker_totals.get(code, 0) + e["quantity"]
-            grand_totals[code] = grand_totals.get(code, 0) + e["quantity"]
         if worker_totals:
             worker_data.append({"worker": w["name"], "totals": worker_totals})
-    return {"year": y, "month": m, "workers": worker_data, "grand_totals": grand_totals}
+    return {"year": y, "month": m, "workers": worker_data}
 
 
 @router.get("/workers")
