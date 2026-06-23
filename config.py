@@ -15,6 +15,7 @@ EXCEL_SLIPS_DIR = PAY_SLIPS_DIR / "excel"
 PRODUCT_CATALOG_PATH = DATA_DIR / "product_catalog.xlsx"
 TOKEN_DIR = DATA_DIR / "tokens"
 AGENT_MEMORY_DIR = DATA_DIR / "agent_memory"
+HISTORY_DIR = DATA_DIR / "history"
 
 for d in [
     DATA_DIR,
@@ -24,6 +25,7 @@ for d in [
     EXCEL_SLIPS_DIR,
     TOKEN_DIR,
     AGENT_MEMORY_DIR,
+    HISTORY_DIR,
 ]:
     d.mkdir(parents=True, exist_ok=True)
 
@@ -49,35 +51,6 @@ if not MODEL_FALLBACK_CHAIN:
 
 FALLBACK_MODELS = MODEL_FALLBACK_CHAIN
 
-
-class ModelRouter:
-    """Classify user input by complexity and select appropriate model."""
-
-    SIMPLE_KEYWORDS = ["banaye", "production", "product", "absent", "status", "catalog"]
-    MEDIUM_KEYWORDS = [
-        "summary",
-        "report",
-        "daily",
-        "weekly",
-        "monthly",
-        "advance",
-        "rejection",
-    ]
-    COMPLEX_KEYWORDS = ["payslip", "salary", "calculate", "email", "send"]
-
-    @classmethod
-    def select(cls, user_input: str, fallback_index: int = 0) -> str:
-        if fallback_index > 0:
-            idx = min(fallback_index, len(MODEL_FALLBACK_CHAIN) - 1)
-            return MODEL_FALLBACK_CHAIN[idx]
-
-        text = user_input.lower()
-        if any(kw in text for kw in cls.COMPLEX_KEYWORDS):
-            return MODEL_FALLBACK_CHAIN[0]
-        elif any(kw in text for kw in cls.MEDIUM_KEYWORDS):
-            return MODEL_FALLBACK_CHAIN[1]
-        else:
-            return MODEL_FALLBACK_CHAIN[2]
 
 
 MANAGER_EMAIL = os.getenv("MANAGER_EMAIL", "")
@@ -106,7 +79,18 @@ RATE_10X25 = float(os.getenv("RATE_10X25", "0"))
 FIXED_WORKERS_ENV = os.getenv(
     "FIXED_WORKERS", "Naeem,Kaleem,Akbar,Suny,Sajjad,Irfan,Kashif,Gulmast"
 )
-FIXED_WORKERS = [w.strip() for w in FIXED_WORKERS_ENV.split(",")]
+_raw_workers = [w.strip() for w in FIXED_WORKERS_ENV.split(",") if w.strip()]
+if len(_raw_workers) < 2:
+    raise ValueError(f"FIXED_WORKERS must have at least 2 workers, got {len(_raw_workers)}: {_raw_workers}")
+_non_empty = [w for w in _raw_workers if w]
+if len(_non_empty) < len(_raw_workers):
+    raise ValueError(f"FIXED_WORKERS contains empty names: {_raw_workers}")
+_dupes = set()
+for w in _raw_workers:
+    if w in _dupes:
+        raise ValueError(f"FIXED_WORKERS has duplicate: '{w}'")
+    _dupes.add(w)
+FIXED_WORKERS = _raw_workers
 
 DATABASE_URL = os.getenv("DATABASE_URL", str(DATA_DIR / "admin_ops.db"))
 

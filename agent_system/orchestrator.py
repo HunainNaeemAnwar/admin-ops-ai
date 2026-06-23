@@ -1,36 +1,36 @@
 import asyncio
 import json
+import re
 from datetime import date
 from typing import Optional
 
 import agent_system.provider
 
 from openai import RateLimitError, APIStatusError
-from agents import Agent, Runner, function_tool, ModelSettings
+from agents import Agent, Runner, function_tool, ModelSettings, GuardrailFunctionOutput, input_guardrail, InputGuardrailTripwireTriggered
 from agents.run_config import RunConfig
-from agents.run_error_handlers import RunErrorHandlerResult, RunErrorHandlerInput
-from config import FIXED_WORKERS, PDF_DIR, EXCEL_SLIPS_DIR
+from agents.run_error_handlers import RunErrorHandlerResult
+from config import FIXED_WORKERS, TAX_PERCENTAGE
 from agent_system.provider import ACTIVE_MODEL, get_model_by_name
-from tools.production_tools import (
-    log_production_json,
-    mark_absent as prod_mark_absent,
-    mark_all_absent,
-    update_entry as prod_update_entry,
-    parse_table_to_production,
+from tools.bus import (
+    record_production_batch, mark_worker_absent, mark_all_workers_absent,
+    update_production_entry, parse_table, get_date_status,
+    get_production_summary, get_catalog, record_rejection,
+    record_worker_advance, get_rejection_distribution,
+    generate_worker_payslip, generate_payslip_files,
 )
-from tools.rejection_tools import log_rejection as rej_log
-from tools.advance_tools import record_advance as adv_record
-from tools.report_tools import get_daily_status as status_get, get_summary as summary_get
-from tools.export_tools import generate_excel_report
-from tools.payslip_tools import generate_pdf_payslip, generate_excel_payslip
 from tools.database import (
     get_active_workers, get_all_products, get_worker_id,
     get_total_advances_for_worker_month,
-    get_worker_month_production,
+    get_worker_month_production, get_product_id,
     save_payslip,
 )
+from tools.production_tools import get_product_info
 from agent_system.memory_manager import ConversationMemory
+from agent_system.cost_tracker import track_usage, format_session_cost
 
+
+BASE_RUN_CONFIG = RunConfig(tool_not_found_behavior="return_error_to_model")
 
 _memories: dict[str, ConversationMemory] = {}
 
@@ -41,58 +41,136 @@ def _get_memory(session_id: str = "default") -> ConversationMemory:
     return _memories[session_id]
 
 
+# ── Input Guardrail ────────────────────────────────────
+
+MIN_INPUT_LENGTH = 1
+MAX_INPUT_LENGTH = 2000
+
+
+@input_guardrail(name="Input sanitizer", run_in_parallel=False)
+async def _input_sanitizer(
+    ctx, agent, input_data: str | list
+) -> GuardrailFunctionOutput:
+    if isinstance(input_data, str):
+        sanitized = input_data.strip()
+        if not sanitized:
+            return GuardrailFunctionOutput(
+                tripwire_triggered=True, output_info="Input is empty."
+            )
+        if len(sanitized) > MAX_INPUT_LENGTH:
+            return GuardrailFunctionOutput(
+                tripwire_triggered=True,
+                output_info=f"Input too long ({len(sanitized)} chars). Max {MAX_INPUT_LENGTH}.",
+            )
+    return GuardrailFunctionOutput(tripwire_triggered=False, output_info="")
+
+
+GREETING_PATTERN = re.compile(
+    r"^(hel+o+|hi|hey|hye|hie|salam|slm|adaab|khushamdeed|good\s*(morning|evening|afternoon|night|day)|sat\s*sri\s*akal|assalam\s*ualaikum|walekum\s*salam)",
+    re.IGNORECASE,
+)
+
+
+@input_guardrail(name="Greeting handler", run_in_parallel=False)
+async def _greeting_handler(
+    ctx, agent, input_data: str | list
+) -> GuardrailFunctionOutput:
+    if isinstance(input_data, str):
+        text = input_data.strip().rstrip("?!.,;:")
+        if GREETING_PATTERN.match(text):
+            return GuardrailFunctionOutput(
+                tripwire_triggered=True,
+                output_info="👋 Hello! Main factory accountant hoon. Production entry, reports, payslips, aur advances handle karta hoon. Aap kya karna chahte hain?",
+            )
+    return GuardrailFunctionOutput(tripwire_triggered=False, output_info="")
+
+
 # ── Instructions per specialist ───────────────────────
 
+PERSONA = """You are a senior factory accountant with 20 years of experience at a manufacturing plant.
+You speak Urdu and English mix naturally (Roman Urdu).
+You are precise, professional, but friendly with workers.
+You NEVER share financial details with anyone except the father.
+You double-check numbers before confirming."""
+
+PRODUCTION_RULES = """<rules>
+- Production entry → log_production_tool. Include "date":"YYYY-MM-DD" for past dates (omit for today).
+- Multi-row tables → parse_table_tool
+- Worker absent → mark_absent_tool with optional reason (e.g. "Eid", "sick")
+- Edit entry → update_entry_tool
+- Production + absent together → batch_daily_update_tool
+- Tool warns "already has data" → tell user, ask for confirmation resend
+- Multiple workers absent same date → workers="all"
+- Worker already absent → report to user, don't retry
+- NEVER create fake data. If unsure, ask.
+</rules>"""
+
+REPORTING_RULES = """<rules>
+- Status check → get_daily_status_tool
+- Summary (daily/weekly/monthly) → get_summary_tool
+- Catalog/list → list_catalog_tool
+- Email manager (quantities only) → send_report_tool
+- NEVER share individual worker pay or financials.
+</rules>"""
+
+FINANCE_RULES = """<rules>
+- Department rejection → log_rejection_tool (equal distribution)
+- Worker advance → record_advance_tool
+- Generate payslip PDF+Excel → generate_payslip_tool
+- If month/year not specified, use current month (June 2026)
+- Generate immediately unless amounts seem wrong
+</rules>"""
+
+
+HANDOFF_FOOTER = """
+You are now handling the user directly. Respond completely in Roman Urdu mixed with English.
+Use available tools as needed. After tool execution, explain the result to the user in a friendly way.
+Do NOT hand off back to the Router — you are the final responder."""
+
+
 def _production_instructions(ctx, agent) -> str:
-    return f"""<role>Factory production data entry assistant.</role>
+    return f"""{PERSONA}
+
+<domain>Production Data Entry</domain>
 
 <context>Workers: {', '.join(FIXED_WORKERS)}
 Products: NUT, 10*20, 6*25, 6*30, 10*25 (convert ×/x → *)
 Today: {date.today()}</context>
 
-<rules>
-- Single/few entries → log_production_tool with extracted JSON
-- Multi-row tables (pasted with dates + product columns) → parse_table_tool
-- Worker absent → mark_absent_tool
-- Edit entry → update_entry_tool
-- Combined production + absent → batch_daily_update_tool
-- Return tool output directly
-</rules>"""
+{PRODUCTION_RULES}
+{HANDOFF_FOOTER}"""
 
 
 def _reporting_instructions(ctx, agent) -> str:
-    return f"""<role>Factory production reporting assistant. Quantities only — no individual or financial data.</role>
+    return f"""{PERSONA}
+
+<domain>Production Reporting</domain>
 
 <context>Workers: {', '.join(FIXED_WORKERS)}
 Products: NUT, 10*20, 6*25, 6*30, 10*25
 Today: {date.today()}</context>
 
-<rules>
-- Status check → get_daily_status_tool
-- Summary (daily/weekly/monthly) → get_summary_tool
-- Show catalog/workers/products/list → list_catalog_tool
-- Email to manager (quantities only) → send_report_tool
-- Return tool output directly
-</rules>"""
+{REPORTING_RULES}
+{HANDOFF_FOOTER}"""
 
 
 def _finance_instructions(ctx, agent) -> str:
-    return f"""<role>Factory finance assistant handling rejections, advances, and payslips.</role>
+    return f"""{PERSONA}
+
+<domain>Finance & Payslips</domain>
 
 <context>Workers: {', '.join(FIXED_WORKERS)}
 Products: NUT, 10*20, 6*25, 6*30, 10*25
 Today: {date.today()}</context>
 
-<rules>
-- Department rejection → log_rejection_tool (equally distributes among eligible workers)
-- Worker advance payment → record_advance_tool
-- Generate payslip PDF+Excel → generate_payslip_tool
-- Return tool output directly
-</rules>"""
+{FINANCE_RULES}
+{HANDOFF_FOOTER}"""
 
 
 def _router_instructions(ctx, agent) -> str:
-    return f"""<role>Route user requests to the right specialist agent. Call ONE specialist per message.</role>
+    return f"""{PERSONA}
+
+<domain>Router — classify and delegate</domain>
 
 <context>Workers: {', '.join(FIXED_WORKERS)}
 Products: NUT, 10*20, 6*25, 6*30, 10*25
@@ -100,15 +178,32 @@ Today: {date.today()}</context>
 
 <rules>
 1. Identify intent from user message
-2. Route to the correct specialist
-3. Return the specialist's output as-is
+2. Call the delegate tool immediately — do NOT ask extra questions
+3. Return the specialist's response as-is
 
 Routing:
 - Production data entry, tables, absences, edits → delegate_production
 - Summary, status, catalog, email reports → delegate_reporting
 - Rejections, advances, payslips → delegate_finance
-- Greeting, empty message, or uncertain → delegate_reporting (shows catalog by default)
-</rules>"""
+- Greeting, empty, or uncertain → respond naturally (do NOT call any tool)
+- Output says "resend to overwrite" / "already exists" → include in your response
+
+Response format: Always respond in Roman Urdu mixed with English, matching user's language.
+</rules>
+
+<examples>
+User: hello
+You: 👋 Hello! Main factory accountant hoon. Production entry, reports, payslips, aur advances handle karta hoon. Aap kya karna chahte hain?
+
+User: Naeem ne 300 nut kiye
+(delegate_production)
+
+User: aj ka status kya hai
+(delegate_reporting)
+
+User: Kaleem ki payslip banao
+(delegate_finance)
+</examples>"""
 
 
 # ── Production Tools ──────────────────────────────────
@@ -120,16 +215,26 @@ def log_production_tool(entries_json: str) -> str:
     Use for 1-5 entries where you can identify worker name, product code, and quantity from natural language.
     Example input: "Naeem made 300 NUT and 150 10*20"
     Example JSON: [{"worker":"Naeem","product_code":"NUT","quantity":300},{"worker":"Naeem","product_code":"10*20","quantity":150}]
+    For past dates, include "date":"2026-06-22" in each entry object.
 
     Do NOT use for pasted tables — use parse_table_tool instead.
 
     Args:
         entries_json: JSON array string. Format: [{"worker":"Kaleem","product_code":"NUT","quantity":300}]
+                     Optional field: "date":"YYYY-MM-DD" for past dates.
 
     Returns:
-        Confirmation per entry
+        Confirmation per entry. May show warning if data already exists.
     """
-    return log_production_json(entries_json)
+    try:
+        entries = json.loads(entries_json) if isinstance(entries_json, str) else entries_json
+        if isinstance(entries, dict):
+            entries = [entries]
+        if not isinstance(entries, list):
+            return "Must be a JSON array"
+        return record_production_batch(entries)
+    except (json.JSONDecodeError, TypeError):
+        return "Invalid JSON format."
 
 
 @function_tool
@@ -138,8 +243,7 @@ def parse_table_tool(worker: str, table_text: str) -> str:
 
     The table must have a DATE column and product columns (NUT, 6*30, 6*25, 10*20, 10*25).
     Handles box-drawing characters (┌─┐└┘├┤│) and plain pipe tables.
-    Product codes can appear as 6×30, 6x30, 6*30 etc. — all auto-converted.
-    When dates are in DD-MMM format (e.g. 1-Jun, 15-May), auto-fills the current year.
+    Supports dates in YYYY-MM-DD, MM-DD-YYYY, and DD-MM-YYYY formats.
 
     Only call this when user pastes a multi-row table. NOT for single-line messages.
 
@@ -150,25 +254,28 @@ def parse_table_tool(worker: str, table_text: str) -> str:
     Returns:
         Per-date results showing what was recorded
     """
-    return parse_table_to_production(worker, table_text)
+    return parse_table(worker, table_text)
 
 
 @function_tool
-def mark_absent_tool(workers: str, date_str: Optional[str] = None) -> str:
-    """Mark one or all workers as absent for a given date.
+def mark_absent_tool(workers: str, date_str: Optional[str] = None, reason: Optional[str] = None) -> str:
+    """Mark one or all workers as absent for a given date. Optionally include a reason (e.g. "Eid", "sick", "public holiday").
+
+    For multiple workers absent on the same date, use workers="all".
 
     Args:
         workers: Worker name (e.g. 'Kaleem') or 'all' to mark all workers absent
         date_str: Date in YYYY-MM-DD format (default: today)
+        reason: Optional reason like 'Eid', 'public holiday', 'sick leave'
 
     Returns:
         Confirmation of which workers were marked absent
     """
-    if date_str is None:
-        date_str = date.today().isoformat()
+    ds = date_str or date.today().isoformat()
+    rsn = reason or ""
     if workers.lower() == "all":
-        return mark_all_absent(date_str)
-    return prod_mark_absent(workers, date_str)
+        return mark_all_workers_absent(ds, rsn)
+    return mark_worker_absent(workers, ds, rsn)
 
 
 @function_tool
@@ -183,8 +290,7 @@ def update_entry_tool(entry_id: int, new_quantity: int, reason: Optional[str] = 
     Returns:
         Old vs new values confirmation
     """
-    rsn = reason or ""
-    return prod_update_entry(entry_id, new_quantity, rsn)
+    return update_production_entry(entry_id, new_quantity, reason or "")
 
 
 @function_tool
@@ -197,6 +303,7 @@ def batch_daily_update_tool(entries_json: str, absent_workers: Optional[str] = N
     Args:
         entries_json: JSON array of production entries.
             Format: [{"worker":"Kaleem","product_code":"NUT","quantity":300}]
+            Optional "date":"YYYY-MM-DD" for past dates.
         absent_workers: Optional JSON array of worker names to mark absent.
             Format: '["Naeem","Sajjad"]' or null
 
@@ -211,8 +318,7 @@ def batch_daily_update_tool(entries_json: str, absent_workers: Optional[str] = N
         if not isinstance(parsed, list):
             results.append("[Production] Invalid: must be an array")
         else:
-            prod_result = log_production_json(json.dumps(parsed))
-            results.append(f"[Production]\n{prod_result}")
+            results.append(f"[Production]\n{record_production_batch(parsed)}")
     except (json.JSONDecodeError, TypeError) as e:
         results.append(f"[Production] Invalid JSON: {e}")
 
@@ -223,7 +329,7 @@ def batch_daily_update_tool(entries_json: str, absent_workers: Optional[str] = N
                 absent_list = [absent_list]
             for w in absent_list:
                 if isinstance(w, str) and w.strip():
-                    results.append(prod_mark_absent(w.strip()))
+                    results.append(mark_worker_absent(w.strip()))
         except (json.JSONDecodeError, TypeError) as e:
             results.append(f"[Absent] Invalid input: {e}")
 
@@ -242,7 +348,7 @@ def get_daily_status_tool(date_str: Optional[str] = None) -> str:
     Returns:
         Status message with present/absent workers and product totals
     """
-    return status_get(date_str)
+    return get_date_status(date_str or "")
 
 
 @function_tool
@@ -258,7 +364,8 @@ def get_summary_tool(period: str = "daily", year: Optional[int] = None, month: O
     Returns:
         Formatted summary with product totals per worker per day
     """
-    return summary_get(period, year, month, day)
+    today = date.today()
+    return get_production_summary(period, year or today.year, month or today.month, day or today.day)
 
 
 @function_tool
@@ -276,40 +383,17 @@ def send_report_tool(period: str = "daily", year: Optional[int] = None, month: O
     """
     from tools.email_tools import send_summary
     today = date.today()
-    y = year or today.year
-    m = month or today.month
-    d = day or today.day
-    return send_summary(period, y, m, d)
+    return send_summary(period, year or today.year, month or today.month, day or today.day)
 
 
 @function_tool
 def list_catalog_tool() -> str:
-    """List all workers, products with rates, and today's production status. Default response for greetings or empty messages.
+    """List all workers, products with rates, and today's production status.
 
     Returns:
         Catalog info including worker list, product rates, and current date
     """
-    today = date.today()
-    workers = get_active_workers()
-    products = get_all_products()
-
-    lines = [
-        f"Today: {today.isoformat()}",
-        f"",
-        f"Workers ({len(workers)}):",
-    ]
-    for w in workers:
-        lines.append(f"  {w['name']}")
-
-    lines.append(f"\nProducts:")
-    for p in products:
-        lines.append(f"  {p['code']}: Rs {p['rate']:,.2f}/pc ({p['description']})")
-
-    status = status_get()
-    lines.append(f"\nToday's Status:")
-    lines.append(f"  {status}")
-
-    return "\n".join(lines)
+    return get_catalog()
 
 
 # ── Finance Tools ─────────────────────────────────────
@@ -334,7 +418,7 @@ def log_rejection_tool(year: int, month: int, product_code: str, total_qty: int,
             excluded = json.loads(excluded_workers)
         except (json.JSONDecodeError, TypeError):
             excluded = [excluded_workers]
-    return rej_log(year, month, product_code, total_qty, excluded)
+    return record_rejection(year, month, product_code, total_qty, excluded)
 
 
 @function_tool
@@ -351,8 +435,7 @@ def record_advance_tool(worker: str, amount: float, year: int, month: int, descr
     Returns:
         Confirmation with total advances for this worker this month
     """
-    desc = description or ""
-    return adv_record(worker, amount, year, month, desc)
+    return record_worker_advance(worker, amount, year, month, description or "")
 
 
 @function_tool
@@ -371,10 +454,8 @@ def generate_payslip_tool(year: int, month: int, worker: Optional[str] = None) -
     today = date.today()
     y = year or today.year
     m = month or today.month
-    from config import TAX_PERCENTAGE
-    from tools.rejection_tools import get_distribution_for_month
 
-    distribution = get_distribution_for_month(y, m)
+    distribution = get_rejection_distribution(y, m)
 
     if worker:
         workers_list = [worker]
@@ -399,31 +480,29 @@ def generate_payslip_tool(year: int, month: int, worker: Optional[str] = None) -
             product_totals[code] = product_totals.get(code, 0) + p["quantity"]
 
         gross_total = 0.0
-        from tools.production_tools import get_product_info
         for code, qty in product_totals.items():
             product = get_product_info(code)
             if product:
                 gross_total += qty * product["rate"]
 
-        rejection_qty = 0
+        rejection_value = 0
         for dist in distribution:
             w_share = dist["distribution"].get(w, 0)
             product = get_product_info(dist["product_code"])
             if product:
-                rejection_qty += w_share * product["rate"]
+                rejection_value += w_share * product["rate"]
 
         advance_total = get_total_advances_for_worker_month(wid, y, m)
 
         tax_amount = round(gross_total * TAX_PERCENTAGE / 100, 2)
-        net_payable = round(gross_total - rejection_qty - advance_total - tax_amount, 2)
+        net_payable = round(gross_total - rejection_value - advance_total - tax_amount, 2)
 
-        save_payslip(wid, y, m, gross_total, tax_amount, rejection_qty, advance_total, net_payable)
-        pdf_path = generate_pdf_payslip(w, y, m)
-        xls_path = generate_excel_payslip(w, y, m)
+        save_payslip(wid, y, m, gross_total, tax_amount, rejection_value, advance_total, net_payable)
+        pdf_path, xls_path = generate_payslip_files(w, y, m)
 
         results.append(
             f"  {w}: Gross Rs {gross_total:,.2f}, "
-            f"Reject Rs {rejection_qty:,.2f}, "
+            f"Reject Rs {rejection_value:,.2f}, "
             f"Advance Rs {advance_total:,.2f}, "
             f"Tax Rs {tax_amount:,.2f}, "
             f"Net Rs {net_payable:,.2f}\n"
@@ -444,7 +523,6 @@ def _create_agents(model_override=None):
         top_p=0.9,
         max_tokens=2000,
         parallel_tool_calls=True,
-        tool_choice="required",
     )
 
     production_agent = Agent(
@@ -486,29 +564,30 @@ def _create_agents(model_override=None):
         ],
     )
 
+    router_settings = ModelSettings(
+        temperature=0.1,
+        top_p=0.9,
+        max_tokens=2000,
+        parallel_tool_calls=False,
+    )
     router = Agent(
         name="Router",
         instructions=_router_instructions,
         model=model,
-        model_settings=ModelSettings(
-            temperature=0.1,
-            top_p=0.9,
-            max_tokens=2000,
-            parallel_tool_calls=True,
-            tool_choice="required",
-        ),
+        model_settings=router_settings,
+        input_guardrails=[_greeting_handler, _input_sanitizer],
         tools=[
             production_agent.as_tool(
                 tool_name="delegate_production",
-                tool_description="Route to production specialist for data entry, table parsing, absences, and entry edits.",
+                tool_description="Production data entry, tables, absences, and entry edits.",
             ),
             reporting_agent.as_tool(
                 tool_name="delegate_reporting",
-                tool_description="Route to reporting specialist for summaries, status checks, catalog listing, and email reports. Use for greetings or unclear requests.",
+                tool_description="Production summary, daily status, catalog listing, and email reports.",
             ),
             finance_agent.as_tool(
                 tool_name="delegate_finance",
-                tool_description="Route to finance specialist for rejection recording, advance payments, and payslip generation.",
+                tool_description="Payslip generation, advance payments, and rejection recording.",
             ),
         ],
     )
@@ -520,41 +599,50 @@ def _create_agents(model_override=None):
 async def chat(user_input: str, session_id: str = "default") -> str:
     memory = _get_memory(session_id)
     await memory.cleanup()
-    run_config = RunConfig(
-        tool_not_found_behavior="return_error_to_model",
-    )
 
     from config import LLM_PROVIDER, MISTRAL_API_KEY, GEMINI_API_KEY, CEREBRAS_API_KEY, OPENAI_API_KEY
 
     available = {"mistral": bool(MISTRAL_API_KEY), "gemini": bool(GEMINI_API_KEY), "cerebras": bool(CEREBRAS_API_KEY), "openai": bool(OPENAI_API_KEY)}
-    fallback_chain = [LLM_PROVIDER] + [m for m in ["mistral", "gemini", "cerebras", "openai"] if m != LLM_PROVIDER and available[m]]
+    primary = LLM_PROVIDER if available.get(LLM_PROVIDER, False) else next((m for m, v in available.items() if v), "cerebras")
+    fallback_chain = [primary] + [m for m in ["mistral", "gemini", "cerebras", "openai"] if m != primary and available[m]]
+    if not fallback_chain:
+        fallback_chain = ["cerebras"]
     last_error = ""
 
     for attempt, model_name in enumerate(fallback_chain):
         model = get_model_by_name(model_name)
         agent = _create_agents(model_override=model)
         try:
-            await asyncio.sleep(1)
-            result = await Runner.run(
-                agent,
-                input=user_input,
-                session=memory.session,
-                max_turns=15,
-                error_handlers={
-                    "max_turns": lambda _: RunErrorHandlerResult(
-                        final_output="I couldn't complete this in time. Try breaking your request into smaller steps.",
-                        include_in_history=False,
-                    ),
-                },
-                run_config=run_config,
+            result = await asyncio.wait_for(
+                Runner.run(
+                    agent,
+                    input=user_input,
+                    session=memory.session,
+                    max_turns=10,
+                    error_handlers={
+                        "max_turns": lambda _: RunErrorHandlerResult(
+                            final_output="Mujhe is request ko complete karne mein zyada time lag raha hai. Please chhotee request mein tod dein.",
+                            include_in_history=False,
+                        ),
+                    },
+                    run_config=BASE_RUN_CONFIG,
+                ),
+                timeout=30,
             )
+            track_usage(session_id, model_name, user_input, str(result.final_output)[:200])
             await memory.compact_if_needed()
             return result.final_output
+        except asyncio.TimeoutError:
+            return "⚠️ Server busy — please thodi der baad try karein."
+        except InputGuardrailTripwireTriggered as e:
+            msg = e.guardrail_result.output.output_info or "OK"
+            await memory.session.add_items([{"role": "assistant", "content": msg}])
+            return msg
         except (RateLimitError, APIStatusError) as e:
             msg = str(e)
             if "Messages with role 'tool'" in msg:
                 await memory.delete()
-                return "Memory corrupted — deleted and reset. Please try again."
+                return "Memory corrupted — delete kar di. Dobara try karein."
             is_last = attempt == len(fallback_chain) - 1
             prefix = "⚠️ " if is_last else "⚠️ "
             if "429" in msg:
@@ -563,4 +651,59 @@ async def chat(user_input: str, session_id: str = "default") -> str:
             last_error = f"{prefix}{model_name}: {e}"
             continue
 
-    return last_error or "⚠️ All models failed. Try again later."
+    return last_error or "⚠️ Sab models fail ho gaye. Baad mein try karein."
+
+
+# ── Streaming ─────────────────────────────────────────
+
+async def stream_chat(user_input: str, session_id: str = "default"):
+    """Generator that yields SSE-formatted chunks from streaming agent response."""
+    memory = _get_memory(session_id)
+    await memory.cleanup()
+
+    from config import LLM_PROVIDER, MISTRAL_API_KEY, GEMINI_API_KEY, CEREBRAS_API_KEY, OPENAI_API_KEY
+    available = {"mistral": bool(MISTRAL_API_KEY), "gemini": bool(GEMINI_API_KEY), "cerebras": bool(CEREBRAS_API_KEY), "openai": bool(OPENAI_API_KEY)}
+    primary = LLM_PROVIDER if available.get(LLM_PROVIDER, False) else next((m for m, v in available.items() if v), "cerebras")
+    fallback_chain = [primary] + [m for m in ["mistral", "gemini", "cerebras", "openai"] if m != primary and available[m]]
+    if not fallback_chain:
+        fallback_chain = ["cerebras"]
+
+    for attempt, model_name in enumerate(fallback_chain):
+        model = get_model_by_name(model_name)
+        agent = _create_agents(model_override=model)
+        try:
+            result = Runner.run_streamed(
+                agent,
+                input=user_input,
+                session=memory.session,
+                max_turns=10,
+                run_config=BASE_RUN_CONFIG,
+            )
+            async for event in result.stream_events():
+                if event.type == "raw_response_event" and hasattr(event.data, "delta"):
+                    delta = event.data.delta
+                    if delta and isinstance(delta, str):
+                        yield f"data: {delta}\n\n"
+
+            final = await result.result()
+            yield f"data: [DONE]\n\n"
+            track_usage(session_id, model_name, user_input, str(final.final_output)[:200])
+            await memory.compact_if_needed()
+            return
+        except InputGuardrailTripwireTriggered as e:
+            msg = e.guardrail_result.output.output_info or "OK"
+            await memory.session.add_items([{"role": "assistant", "content": msg}])
+            yield f"data: {msg}\n\ndata: [DONE]\n\n"
+            return
+        except (RateLimitError, APIStatusError) as e:
+            msg = str(e)
+            if "Messages with role 'tool'" in msg:
+                await memory.delete()
+                yield f"data: Memory corrupted — delete kar di. Dobara try karein.\n\ndata: [DONE]\n\n"
+                return
+            if attempt == len(fallback_chain) - 1:
+                yield f"data: ⚠️ {model_name}: {e}\n\ndata: [DONE]\n\n"
+                return
+            continue
+
+    yield f"data: ⚠️ Sab models fail ho gaye.\n\ndata: [DONE]\n\n"

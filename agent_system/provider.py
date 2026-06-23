@@ -17,73 +17,39 @@ from config import (
     LLM_PROVIDER,
 )
 
-# Tracing key — real OpenAI API key for Traces dashboard
 os.environ["OPENAI_API_KEY"] = OPENAI_API_KEY
 
 from openai import AsyncOpenAI
 from agents.models.openai_chatcompletions import OpenAIChatCompletionsModel
 
-# Cerebras LLM client
-cerebras_client = AsyncOpenAI(
-    api_key=CEREBRAS_API_KEY,
-    base_url=DEFAULT_OPENAI_BASE_URL,
-)
+_models: dict[str, OpenAIChatCompletionsModel] = {}
 
-cerebras_model = OpenAIChatCompletionsModel(
-    model=CEREBRAS_MODEL,
-    openai_client=cerebras_client,
-)
+if MISTRAL_API_KEY:
+    _models["mistral"] = OpenAIChatCompletionsModel(
+        model=MISTRAL_MODEL,
+        openai_client=AsyncOpenAI(api_key=MISTRAL_API_KEY, base_url=MISTRAL_BASE_URL),
+    )
 
-# Gemini LLM client
-gemini_client = AsyncOpenAI(
-    api_key=GEMINI_API_KEY,
-    base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
-)
+if GEMINI_API_KEY:
+    _models["gemini"] = OpenAIChatCompletionsModel(
+        model=GEMINI_MODEL,
+        openai_client=AsyncOpenAI(api_key=GEMINI_API_KEY, base_url="https://generativelanguage.googleapis.com/v1beta/openai/"),
+    )
 
-gemini_model = OpenAIChatCompletionsModel(
-    model=GEMINI_MODEL,
-    openai_client=gemini_client,
-)
+if CEREBRAS_API_KEY:
+    _models["cerebras"] = OpenAIChatCompletionsModel(
+        model=CEREBRAS_MODEL,
+        openai_client=AsyncOpenAI(api_key=CEREBRAS_API_KEY, base_url=DEFAULT_OPENAI_BASE_URL),
+    )
 
-# Mistral LLM client
-mistral_client = AsyncOpenAI(
-    api_key=MISTRAL_API_KEY,
-    base_url=MISTRAL_BASE_URL,
-)
+if OPENAI_API_KEY:
+    _models["openai"] = OpenAIChatCompletionsModel(
+        model="gpt-4o-mini",
+        openai_client=AsyncOpenAI(api_key=OPENAI_API_KEY),
+    )
 
-mistral_model = OpenAIChatCompletionsModel(
-    model=MISTRAL_MODEL,
-    openai_client=mistral_client,
-)
-
-# OpenAI direct client (uses the tracing key)
-openai_client = AsyncOpenAI(api_key=OPENAI_API_KEY)
-
-openai_model = OpenAIChatCompletionsModel(
-    model="gpt-4o-mini",
-    openai_client=openai_client,
-)
-
-# Active model — selected by LLM_PROVIDER env var
-ACTIVE_MODEL = mistral_model
-if LLM_PROVIDER == "cerebras":
-    ACTIVE_MODEL = cerebras_model
-elif LLM_PROVIDER == "gemini":
-    ACTIVE_MODEL = gemini_model
-elif LLM_PROVIDER == "openai":
-    ACTIVE_MODEL = openai_model
-
-# Fallback chain: if the active model fails (429, tool issues), try these in order
-ALL_MODELS: list[OpenAIChatCompletionsModel] = [mistral_model, gemini_model, cerebras_model, openai_model]
+ACTIVE_MODEL = _models.get(LLM_PROVIDER) or next(iter(_models.values()))
 
 
-def get_model_by_name(name: str) -> OpenAIChatCompletionsModel:
-    if name == "mistral":
-        return mistral_model
-    elif name == "gemini":
-        return gemini_model
-    elif name == "cerebras":
-        return cerebras_model
-    elif name == "openai":
-        return openai_model
-    return ACTIVE_MODEL
+def get_model_by_name(name: str) -> OpenAIChatCompletionsModel | None:
+    return _models.get(name)

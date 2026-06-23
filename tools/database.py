@@ -1,10 +1,12 @@
 import sqlite3
 import threading
+from calendar import monthrange
 from datetime import date
 from pathlib import Path
 from typing import Optional
 
 from config import DATABASE_URL
+from tools.cache import cached_workers, cached_products
 
 _local = threading.local()
 
@@ -62,6 +64,7 @@ def init_db():
             quantity INTEGER NOT NULL CHECK(quantity >= 0),
             entry_date TEXT NOT NULL,
             status TEXT DEFAULT 'present' CHECK(status IN ('present', 'absent')),
+            reason TEXT DEFAULT '',
             created_at TEXT DEFAULT (datetime('now')),
             FOREIGN KEY (worker_id) REFERENCES workers(id),
             FOREIGN KEY (product_id) REFERENCES products(id),
@@ -76,18 +79,8 @@ def init_db():
             total_qty INTEGER NOT NULL CHECK(total_qty > 0),
             exclude_workers TEXT DEFAULT '[]',
             created_at TEXT DEFAULT (datetime('now')),
-            FOREIGN KEY (product_id) REFERENCES products(id)
-        );
-
-        CREATE TABLE IF NOT EXISTS advances (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            worker_id INTEGER NOT NULL,
-            amount REAL NOT NULL CHECK(amount > 0),
-            month INTEGER NOT NULL,
-            year INTEGER NOT NULL,
-            description TEXT DEFAULT '',
-            created_at TEXT DEFAULT (datetime('now')),
-            FOREIGN KEY (worker_id) REFERENCES workers(id)
+            FOREIGN KEY (product_id) REFERENCES products(id),
+            UNIQUE(year, month, product_id)
         );
 
         CREATE TABLE IF NOT EXISTS payslips (
@@ -105,12 +98,45 @@ def init_db():
             UNIQUE(worker_id, year, month)
         );
 
+        CREATE TABLE IF NOT EXISTS advances (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            worker_id INTEGER NOT NULL,
+            amount REAL NOT NULL,
+            date TEXT NOT NULL,
+            month INTEGER NOT NULL,
+            year INTEGER NOT NULL,
+            description TEXT DEFAULT '',
+            created_at TEXT DEFAULT (datetime('now')),
+            FOREIGN KEY (worker_id) REFERENCES workers(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS worker_monthly_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            worker_id INTEGER NOT NULL,
+            year INTEGER NOT NULL,
+            month INTEGER NOT NULL,
+            product_id INTEGER NOT NULL,
+            total_quantity INTEGER NOT NULL,
+            gross_amount REAL NOT NULL,
+            archived_at TEXT DEFAULT (datetime('now')),
+            FOREIGN KEY (worker_id) REFERENCES workers(id),
+            FOREIGN KEY (product_id) REFERENCES products(id),
+            UNIQUE(worker_id, year, month, product_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_history_worker_month
+            ON worker_monthly_history(worker_id, year, month);
+
         CREATE INDEX IF NOT EXISTS idx_daily_log_date ON daily_log(entry_date);
         CREATE INDEX IF NOT EXISTS idx_daily_log_worker ON daily_log(worker_id);
         CREATE INDEX IF NOT EXISTS idx_daily_log_worker_date ON daily_log(worker_id, entry_date);
         CREATE INDEX IF NOT EXISTS idx_rejections_month ON rejections(year, month);
         CREATE INDEX IF NOT EXISTS idx_advances_worker_month ON advances(worker_id, year, month);
     """)
+    try:
+        conn.execute("ALTER TABLE daily_log ADD COLUMN reason TEXT DEFAULT ''")
+    except sqlite3.OperationalError:
+        pass
     conn.commit()
 
 
@@ -123,6 +149,7 @@ def get_worker_id(name: str) -> Optional[int]:
 
 
 def get_or_create_worker(name: str) -> int:
+    from tools.cache import invalidate_worker_cache
     wid = get_worker_id(name)
     if wid:
         return wid
@@ -130,15 +157,18 @@ def get_or_create_worker(name: str) -> int:
     cursor = conn.execute("INSERT INTO workers (name) VALUES (?)", (name,))
     conn.commit()
     wid = cursor.lastrowid
+    invalidate_worker_cache()
     return wid
 
 
+@cached_workers
 def get_all_workers() -> list[dict]:
     conn = get_db()
     rows = conn.execute("SELECT id, name, is_active FROM workers ORDER BY name").fetchall()
     return [dict(r) for r in rows]
 
 
+@cached_workers
 def get_active_workers() -> list[dict]:
     conn = get_db()
     rows = conn.execute("SELECT id, name FROM workers WHERE is_active = 1 ORDER BY name").fetchall()
@@ -153,6 +183,7 @@ def get_product_id(code: str) -> Optional[int]:
     return row["id"] if row else None
 
 
+@cached_products
 def get_all_products() -> list[dict]:
     conn = get_db()
     rows = conn.execute("SELECT id, code, description, rate, tax_pct FROM products ORDER BY id").fetchall()
@@ -181,13 +212,13 @@ def log_production(worker_id: int, product_id: int, quantity: int, entry_date: s
         raise
 
 
-def mark_absent(worker_id: int, entry_date: str) -> int:
+def mark_absent(worker_id: int, entry_date: str, reason: str = "") -> int:
     conn = get_db()
     try:
         cursor = conn.execute(
-            """INSERT INTO daily_log (worker_id, product_id, quantity, entry_date, status)
-               VALUES (?, (SELECT id FROM products LIMIT 1), 0, ?, 'absent')""",
-            (worker_id, entry_date),
+            """INSERT INTO daily_log (worker_id, product_id, quantity, entry_date, status, reason)
+               VALUES (?, (SELECT id FROM products LIMIT 1), 0, ?, 'absent', ?)""",
+            (worker_id, entry_date, reason),
         )
         conn.commit()
         return cursor.lastrowid
@@ -224,8 +255,9 @@ def get_logs_for_date(entry_date: str) -> list[dict]:
 
 def get_logs_for_worker(worker_id: int, year: int, month: int) -> list[dict]:
     conn = get_db()
+    days = monthrange(year, month)[1]
     start = f"{year}-{month:02d}-01"
-    end = f"{year}-{month:02d}-31"
+    end = f"{year}-{month:02d}-{days:02d}"
     rows = conn.execute(
         """SELECT dl.id, dl.quantity, dl.entry_date, dl.status,
                   p.code AS product_code, p.description
@@ -237,17 +269,6 @@ def get_logs_for_worker(worker_id: int, year: int, month: int) -> list[dict]:
     ).fetchall()
     return [dict(r) for r in rows]
 
-
-def ensure_day_complete(entry_date: str, worker_ids: list[int]) -> list[int]:
-    conn = get_db()
-    placeholders = ",".join("?" * len(worker_ids))
-    rows = conn.execute(
-        f"""SELECT DISTINCT worker_id FROM daily_log
-             WHERE entry_date = ? AND worker_id IN ({placeholders})""",
-        [entry_date] + worker_ids,
-    ).fetchall()
-    recorded = {r["worker_id"] for r in rows}
-    return [wid for wid in worker_ids if wid not in recorded]
 
 
 # ── Rejections ──────────────────────────────────────
@@ -397,8 +418,9 @@ def get_daily_totals(entry_date: str) -> dict:
 
 def get_worker_month_production(worker_id: int, year: int, month: int) -> list[dict]:
     conn = get_db()
+    days = monthrange(year, month)[1]
     start = f"{year}-{month:02d}-01"
-    end = f"{year}-{month:02d}-31"
+    end = f"{year}-{month:02d}-{days:02d}"
     rows = conn.execute(
         """SELECT p.code AS product_code, dl.quantity, dl.entry_date
            FROM daily_log dl
@@ -408,3 +430,170 @@ def get_worker_month_production(worker_id: int, year: int, month: int) -> list[d
         (worker_id, start, end),
     ).fetchall()
     return [dict(r) for r in rows]
+
+
+# ── Worker Dashboard ────────────────────────────────
+
+def get_worker_daily_breakdown(worker_id: int, year: int, month: int) -> list[dict]:
+    conn = get_db()
+    days_in_month = monthrange(year, month)[1]
+    start = f"{year}-{month:02d}-01"
+    end = f"{year}-{month:02d}-{days_in_month:02d}"
+
+    rows = conn.execute(
+        """SELECT dl.entry_date, dl.status, dl.reason, p.code AS product_code, dl.quantity
+           FROM daily_log dl
+           JOIN products p ON p.id = dl.product_id
+           WHERE dl.worker_id = ? AND dl.entry_date BETWEEN ? AND ?
+           ORDER BY dl.entry_date, p.code""",
+        (worker_id, start, end),
+    ).fetchall()
+
+    products = get_all_products()
+    product_codes = [p["code"] for p in products]
+
+    date_entries: dict[str, dict] = {}
+    for r in rows:
+        d = dict(r)
+        dt = d["entry_date"]
+        if dt not in date_entries:
+            date_entries[dt] = {"products": {}, "status": "no_data", "reason": ""}
+        if d["status"] == "absent":
+            date_entries[dt]["status"] = "absent"
+            if d.get("reason"):
+                date_entries[dt]["reason"] = d["reason"]
+        else:
+            date_entries[dt]["status"] = "present"
+            date_entries[dt]["products"][d["product_code"]] = d["quantity"]
+
+    result = []
+    for day in range(1, days_in_month + 1):
+        date_str = f"{year}-{month:02d}-{day:02d}"
+        if date_str in date_entries:
+            entry = date_entries[date_str]
+            if entry["status"] == "absent":
+                result.append({"date": date_str, "status": "absent", "reason": entry["reason"], "products": {}})
+            else:
+                full_products = {code: entry["products"].get(code, 0) for code in product_codes}
+                result.append({"date": date_str, "status": "present", "reason": "", "products": full_products})
+        else:
+            result.append({
+                "date": date_str,
+                "status": "no_data",
+                "reason": "",
+                "products": {code: 0 for code in product_codes},
+            })
+
+    return result
+
+
+def is_month_archived(year: int, month: int) -> bool:
+    conn = get_db()
+    row = conn.execute(
+        "SELECT COUNT(*) > 0 AS cnt FROM worker_monthly_history WHERE year = ? AND month = ?",
+        (year, month),
+    ).fetchone()
+    return bool(row["cnt"])
+
+
+def insert_worker_history(worker_id: int, year: int, month: int, product_id: int, total_quantity: int, gross_amount: float) -> Optional[int]:
+    conn = get_db()
+    try:
+        cursor = conn.execute(
+            """INSERT OR IGNORE INTO worker_monthly_history
+               (worker_id, year, month, product_id, total_quantity, gross_amount)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (worker_id, year, month, product_id, total_quantity, gross_amount),
+        )
+        conn.commit()
+        return cursor.lastrowid
+    except sqlite3.IntegrityError:
+        return None
+
+
+def get_worker_history_month(worker_id: int, year: int, month: int) -> list[dict]:
+    conn = get_db()
+    rows = conn.execute(
+        """SELECT wmh.total_quantity, wmh.gross_amount, p.code AS product_code
+           FROM worker_monthly_history wmh
+           JOIN products p ON p.id = wmh.product_id
+           WHERE wmh.worker_id = ? AND wmh.year = ? AND wmh.month = ?
+           ORDER BY p.code""",
+        (worker_id, year, month),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_all_history_months() -> list[dict]:
+    conn = get_db()
+    rows = conn.execute(
+        """SELECT DISTINCT year, month FROM worker_monthly_history
+           ORDER BY year DESC, month DESC"""
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def backfill_history(year: int | None = None, month: int | None = None) -> dict:
+    conn = get_db()
+    products = get_all_products()
+    workers = get_active_workers()
+
+    date_filter = ""
+    params: list[str] = []
+    if year is not None and month is not None:
+        date_filter = "AND dl.entry_date BETWEEN ? AND ?"
+        from calendar import monthrange
+        days_in_month = monthrange(year, month)[1]
+        params = [f"{year}-{month:02d}-01", f"{year}-{month:02d}-{days_in_month:02d}"]
+
+    rows = conn.execute(
+        f"""SELECT DISTINCT dl.worker_id, dl.entry_date, p.code AS product_code, p.id AS product_id, dl.quantity
+            FROM daily_log dl
+            JOIN products p ON p.id = dl.product_id
+            WHERE dl.quantity > 0 {date_filter}
+            ORDER BY dl.worker_id, dl.entry_date, p.code""",
+        params,
+    ).fetchall()
+
+    if not rows:
+        return {"status": "ok", "message": "No production data to backfill", "count": 0, "months": []}
+
+    worker_months: dict[tuple[int, int, int], dict[int, int]] = {}
+    for r in rows:
+        d = dict(r)
+        ym = (d["entry_date"][:4], d["entry_date"][5:7])
+        key = (d["worker_id"], int(ym[0]), int(ym[1]))
+        if key not in worker_months:
+            worker_months[key] = {}
+        pid = d["product_id"]
+        worker_months[key][pid] = worker_months[key].get(pid, 0) + d["quantity"]
+
+    count = 0
+    archived_months = set()
+    for (wid, y, m), prods in worker_months.items():
+        for p in products:
+            qty = prods.get(p["id"], 0)
+            if qty > 0:
+                gross = qty * p["rate"]
+                cursor = conn.execute(
+                    """INSERT OR IGNORE INTO worker_monthly_history
+                       (worker_id, year, month, product_id, total_quantity, gross_amount)
+                       VALUES (?, ?, ?, ?, ?, ?)""",
+                    (wid, y, m, p["id"], qty, gross),
+                )
+                if cursor.lastrowid:
+                    count += 1
+        archived_months.add((y, m))
+    conn.commit()
+
+    from tools.export_tools import generate_worker_excel
+    for (y, m) in archived_months:
+        for w in workers:
+            generate_worker_excel(w["name"], y, m)
+
+    return {
+        "status": "ok",
+        "message": f"Backfilled {count} history records across {len(archived_months)} month(s)",
+        "count": count,
+        "months": [{"year": y, "month": m} for y, m in sorted(archived_months)],
+    }

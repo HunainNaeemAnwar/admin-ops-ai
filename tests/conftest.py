@@ -42,6 +42,8 @@ seed_test_db()
 
 
 def clear_tables():
+    from tools.cache import invalidate_all
+    invalidate_all()
     conn = get_db()
     for table in ["daily_log", "rejections", "advances", "payslips"]:
         conn.execute(f"DELETE FROM {table}")

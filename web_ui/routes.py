@@ -1,22 +1,34 @@
+import json
 from datetime import date, datetime
 from pathlib import Path
+from typing import Annotated, Optional
 
-from fastapi import APIRouter, Request, HTTPException, Depends
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi import APIRouter, Request, HTTPException, Form, Depends, Query
+from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse, JSONResponse, StreamingResponse
 
-from config import BASE_DIR, FATHER_EMAIL
-from tools.database import (
-    get_db, get_all_workers, get_all_products, get_logs_for_date,
-    get_worker_id, get_worker_month_production, get_daily_totals,
+from config import BASE_DIR, FRONTEND_URL
+from schemas import (
+    WorkerOut, ProductOut, DailyReport, DailyLogEntry, WorkerMonthData,
+    WorkerDailyBreakdown, MonthlyReport, MonthlyWorkerSummary,
+    AuthUserOut, ArchiveCheckOut, StatusOut,
+    RecordWorkIn, RejectionIn, AdvanceIn, PayslipIn, EmailReportIn,
+    ChatIn, ChatOut, ActionOut, HealthOut,
 )
 from tools.oauth_tools import (
-    get_authorization_url, exchange_code, save_token,
-    list_authorized_users, delete_token, get_valid_credentials,
-    is_father_email,
+    _get_fernet, get_authorization_url, exchange_code, save_token,
+    list_authorized_users, delete_token, is_father_email,
 )
-from tools.production_tools import log_production_json, calc_piece_rate, get_product_info
+from tools.database import (
+    get_all_workers, get_all_products, get_logs_for_date,
+    get_worker_id, get_worker_month_production, get_daily_totals,
+    get_worker_daily_breakdown, is_month_archived,
+    get_all_history_months,
+)
+from tools.production_tools import log_production_json
+from tools.export_tools import generate_worker_excel
 
 router = APIRouter()
+admin_router = APIRouter(prefix="/admin")
 
 TEMPLATES_DIR = BASE_DIR / "web_ui" / "templates"
 _oauth_states: dict[str, dict] = {}
@@ -55,19 +67,38 @@ def _render(template_name: str, **kwargs) -> str:
             html = html.replace(
                 "<!--USERS-->",
                 f'<span style="opacity:0.9;">{email}{father_tag}</span>'
-                f'<a href="/logout?email={email}" style="color:#ffd700;">Logout</a>'
+                f'<a href="/admin/logout?email={email}" style="color:#ffd700;">Logout</a>'
             )
         else:
             html = html.replace(
                 "<!--USERS-->",
-                '<a href="/login" class="login-btn">Sign in with Google</a>'
+                '<a href="/admin/login" class="login-btn">Sign in with Google</a>'
             )
     return html
 
 
+def _decrypt_auth_cookie(request: Request) -> str | None:
+    auth_cookie = request.cookies.get("auth")
+    if not auth_cookie:
+        return None
+    try:
+        fernet = _get_fernet()
+        raw = fernet.decrypt(auth_cookie.encode())
+        data = json.loads(raw.decode())
+        return data.get("email", "")
+    except Exception:
+        return None
+
+
 def get_current_user(request: Request) -> str | None:
+    email = _decrypt_auth_cookie(request)
+    if email:
+        return email
     users = list_authorized_users()
     return users[0] if users else None
+
+
+CurrentUser = Annotated[str | None, Depends(get_current_user)]
 
 
 def require_father(user: str | None):
@@ -75,43 +106,186 @@ def require_father(user: str | None):
         raise HTTPException(403, "Only father can perform this action")
 
 
-# ── Public Routes ───────────────────────────────────
+def require_auth(user: str | None):
+    if not user:
+        raise HTTPException(401, "Authentication required")
 
-@router.get("/", response_class=HTMLResponse)
-async def index(request: Request):
-    users = list_authorized_users()
+
+def _check_auto_archive():
     today = date.today()
+    if today.day != 1:
+        return
+    prev_month = today.month - 1 or 12
+    prev_year = today.year if today.month > 1 else today.year - 1
+    if is_month_archived(prev_year, prev_month):
+        return
+    from tools.database import get_active_workers, get_all_products, insert_worker_history
+    workers = get_active_workers()
+    products = get_all_products()
+    for w in workers:
+        breakdown = get_worker_daily_breakdown(w["id"], prev_year, prev_month)
+        if not breakdown:
+            continue
+        product_totals = {}
+        for day in breakdown:
+            if day["status"] == "present":
+                for code, qty in day["products"].items():
+                    product_totals[code] = product_totals.get(code, 0) + qty
+        for p in products:
+            qty = product_totals.get(p["code"], 0)
+            if qty > 0:
+                gross = qty * p["rate"]
+                insert_worker_history(w["id"], prev_year, prev_month, p["id"], qty, gross)
+        generate_worker_excel(w["name"], prev_year, prev_month)
 
-    logs = get_logs_for_date(today.isoformat())
-    present = set(l["worker_name"] for l in logs if l["status"] == "present")
-    totals = get_daily_totals(today.isoformat())
-    total_pieces = sum(totals.values())
 
-    return _render(
-        "index.html",
-        today=today.isoformat(),
-        users=users,
-        daily_total=f"Rs {total_pieces * 0:,.2f}",
-        daily_workers=str(len(present)),
-        daily_pieces=str(total_pieces),
-        daily_entries=str(len(logs)),
-        daily_workers_list=", ".join(sorted(present)) or "None",
+# ── AUTH ROUTES ──────────────────────────────────────
+
+@router.get("/api/auth/me", response_model=AuthUserOut)
+async def api_auth_me(request: Request) -> AuthUserOut:
+    auth_cookie = request.cookies.get("auth")
+    if not auth_cookie:
+        return AuthUserOut()
+    try:
+        fernet = _get_fernet()
+        raw = fernet.decrypt(auth_cookie.encode())
+        data = json.loads(raw.decode())
+        return AuthUserOut(
+            email=data.get("email", ""),
+            is_father=data.get("is_father", False),
+            authenticated=True,
+        )
+    except Exception:
+        return AuthUserOut()
+
+
+@router.post("/api/auth/logout")
+async def api_auth_logout() -> JSONResponse:
+    resp = JSONResponse({"status": "ok"})
+    resp.delete_cookie("auth", path="/")
+    return resp
+
+
+# ── PUBLIC ROUTES ────────────────────────────────────
+
+@router.get("/", response_model=StatusOut)
+async def worker_dashboard() -> StatusOut:
+    _check_auto_archive()
+    return StatusOut(status="ok", message="Admin Ops AI is running")
+
+
+@router.get("/api/health", response_model=HealthOut)
+async def health_check() -> HealthOut:
+    from tools.database import get_db
+    try:
+        conn = get_db()
+        workers = conn.execute("SELECT COUNT(*) as c FROM workers").fetchone()
+        products = conn.execute("SELECT COUNT(*) as c FROM products").fetchone()
+        return HealthOut(
+            status="ok",
+            database="connected",
+            workers_count=workers["c"] if workers else 0,
+            products_count=products["c"] if products else 0,
+        )
+    except Exception as e:
+        return HealthOut(status="error", database=str(e))
+
+
+@router.get("/api/workers")
+async def api_workers() -> dict:
+    workers = get_all_workers()
+    return {"workers": [{"id": w["id"], "name": w["name"]} for w in workers]}
+
+
+@router.get("/api/products")
+async def api_products() -> dict:
+    products = get_all_products()
+    return {"products": [{"id": p["id"], "code": p["code"]} for p in products]}
+
+
+@router.get("/api/worker/{worker_name}/month/{year}/{month}", response_model=WorkerMonthData)
+async def api_worker_month(worker_name: str, year: int, month: int) -> WorkerMonthData:
+    wid = get_worker_id(worker_name)
+    if not wid:
+        raise HTTPException(404, f"Worker '{worker_name}' not found")
+    if month < 1 or month > 12:
+        raise HTTPException(400, "Invalid month")
+
+    today = date.today()
+    is_current = (year == today.year and month == today.month)
+
+    days = get_worker_daily_breakdown(wid, year, month)
+    has_any = any(d["status"] == "present" for d in days)
+
+    if is_current:
+        source = "live"
+    elif is_month_archived(year, month) and has_any:
+        source = "archived"
+    else:
+        source = "none" if not has_any else "live"
+
+    return WorkerMonthData(worker=worker_name, year=year, month=month, days=days, source=source)
+
+
+@router.get("/api/worker/{worker_name}/excel/{year}/{month}")
+async def api_worker_excel(worker_name: str, year: int, month: int) -> FileResponse:
+    wid = get_worker_id(worker_name)
+    if not wid:
+        raise HTTPException(404, f"Worker '{worker_name}' not found")
+    if month < 1 or month > 12:
+        raise HTTPException(400, "Invalid month")
+
+    filepath = generate_worker_excel(worker_name, year, month)
+    if not filepath:
+        raise HTTPException(404, "No data for this worker and month")
+    return FileResponse(
+        filepath,
+        filename=f"{worker_name}_{year}_{month:02d}.xlsx",
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 
 
-@router.get("/login")
-async def login(request: Request):
+@router.get("/api/archive/check", response_model=ArchiveCheckOut)
+async def api_archive_check() -> ArchiveCheckOut:
+    today = date.today()
+    prev_month = today.month - 1 or 12
+    prev_year = today.year if today.month > 1 else today.year - 1
+    return ArchiveCheckOut(
+        is_first_day=today.day == 1,
+        prev_month_archived=is_month_archived(prev_year, prev_month),
+        prev_month={"year": prev_year, "month": prev_month},
+    )
+
+
+@router.get("/api/history/months")
+async def api_history_months() -> dict:
+    return {"months": get_all_history_months()}
+
+
+# ── OAUTH ROUTES ─────────────────────────────────────
+
+@admin_router.get("/login")
+async def admin_login(request: Request) -> RedirectResponse:
     base = _base_url(request)
     redirect_uri = f"{base}/oauth/callback"
     auth_url, state, code_verifier = get_authorization_url(redirect_uri)
-    _oauth_states[state] = {"created": datetime.now().isoformat(), "redirect_uri": redirect_uri, "code_verifier": code_verifier}
+    _oauth_states[state] = {
+        "created": datetime.now().isoformat(),
+        "redirect_uri": redirect_uri,
+        "code_verifier": code_verifier,
+    }
     return RedirectResponse(auth_url)
 
 
-@router.get("/oauth/callback")
-async def oauth_callback(request: Request, code: str = None, state: str = None, error: str = None):
+@router.get("/oauth/callback", response_model=None)
+async def oauth_callback(
+    request: Request,
+    code: str = None,
+    state: str = None,
+    error: str = None,
+):
     if error:
-        return HTMLResponse(f"<h2>Error: {error}</h2><a href='/'>Go back</a>", status_code=400)
+        return HTMLResponse(f"<h2>Error: {error}</h2><a href='/admin'>Go back</a>", status_code=400)
     if not code or not state:
         raise HTTPException(400, "Missing code or state")
 
@@ -124,18 +298,69 @@ async def oauth_callback(request: Request, code: str = None, state: str = None, 
     full_url = str(request.url)
     creds, email = exchange_code(state, redirect_uri, full_url, code_verifier)
     save_token(email, creds)
-    return RedirectResponse(url="/", status_code=303)
+
+    is_father = is_father_email(email)
+    cookie_data = json.dumps({"email": email, "is_father": is_father})
+    fernet = _get_fernet()
+    encrypted = fernet.encrypt(cookie_data.encode()).decode()
+
+    redirect_path = f"{FRONTEND_URL}/admin" if is_father else f"{FRONTEND_URL}/"
+    resp = RedirectResponse(url=redirect_path, status_code=303)
+    resp.set_cookie(
+        key="auth",
+        value=encrypted,
+        httponly=True,
+        secure=False,
+        samesite="lax",
+        path="/",
+    )
+    return resp
 
 
-@router.get("/logout")
-async def logout(email: str = None):
+@admin_router.get("/logout")
+async def admin_logout(email: str = None) -> RedirectResponse:
     if email:
         delete_token(email)
-    return RedirectResponse(url="/")
+    return RedirectResponse(url="/admin")
 
 
-@router.get("/daily")
-async def daily_report(year: int = None, month: int = None, day: int = None):
+# ── ADMIN ROUTES ─────────────────────────────────────
+
+@admin_router.get("", response_class=HTMLResponse)
+@admin_router.get("/", response_class=HTMLResponse)
+async def admin_index(request: Request, user: CurrentUser) -> str:
+    require_auth(user)
+    users = list_authorized_users()
+    today = date.today()
+
+    logs = get_logs_for_date(today.isoformat())
+    present = set(l["worker_name"] for l in logs if l["status"] == "present")
+    totals = get_daily_totals(today.isoformat())
+
+    products = get_all_products()
+    rate_map = {p["code"]: p["rate"] for p in products}
+    daily_value = sum(totals.get(code, 0) * rate_map.get(code, 0) for code in totals)
+
+    return _render(
+        "index.html",
+        today=today.isoformat(),
+        users=users,
+        daily_total=f"Rs {daily_value:,.2f}",
+        daily_workers=str(len(present)),
+        daily_pieces=str(sum(totals.values())),
+        daily_entries=str(len(logs)),
+        daily_workers_list=", ".join(sorted(present)) or "None",
+    )
+
+
+@admin_router.get("/daily", response_model=DailyReport)
+async def admin_daily_report(
+    user: CurrentUser,
+    year: Annotated[Optional[int], Query()] = None,
+    month: Annotated[Optional[int], Query()] = None,
+    day: Annotated[Optional[int], Query()] = None,
+) -> DailyReport:
+    require_auth(user)
     today = date.today()
     y = year or today.year
     m = month or today.month
@@ -143,22 +368,25 @@ async def daily_report(year: int = None, month: int = None, day: int = None):
     date_str = f"{y}-{m:02d}-{d:02d}"
     logs = get_logs_for_date(date_str)
     totals = get_daily_totals(date_str)
-    return {
-        "date": date_str,
-        "entries": [dict(l) for l in logs],
-        "totals": totals,
-        "total_pieces": sum(totals.values()),
-    }
+    return DailyReport(
+        date=date_str,
+        entries=[DailyLogEntry(**dict(l)) for l in logs],
+        totals=totals,
+        total_pieces=sum(totals.values()),
+    )
 
 
-@router.get("/monthly")
-async def monthly_report(year: int = None, month: int = None):
+@admin_router.get("/monthly", response_model=MonthlyReport)
+async def admin_monthly_report(
+    user: CurrentUser,
+    year: Annotated[Optional[int], Query()] = None,
+    month: Annotated[Optional[int], Query()] = None,
+) -> MonthlyReport:
+    require_auth(user)
     today = date.today()
     y = year or today.year
     m = month or today.month
     workers = get_all_workers()
-    products = get_all_products()
-    product_codes = [p["code"] for p in products]
     worker_data = []
     for w in workers:
         entries = get_worker_month_production(w["id"], y, m)
@@ -166,19 +394,25 @@ async def monthly_report(year: int = None, month: int = None):
         for e in entries:
             code = e["product_code"]
             worker_totals[code] = worker_totals.get(code, 0) + e["quantity"]
-        if worker_totals:
-            worker_data.append({"worker": w["name"], "totals": worker_totals})
-    return {"year": y, "month": m, "workers": worker_data}
+        worker_data.append(MonthlyWorkerSummary(worker=w["name"], totals=worker_totals))
+    return MonthlyReport(year=y, month=m, workers=worker_data)
 
 
-@router.get("/workers")
-async def workers_list():
+@admin_router.get("/workers")
+async def admin_workers_list(user: CurrentUser) -> dict:
+    require_auth(user)
     workers = get_all_workers()
     return {"workers": [w["name"] for w in workers]}
 
 
-@router.get("/worker/{worker}")
-async def worker_detail(worker: str, year: int = None, month: int = None):
+@admin_router.get("/worker/{worker}")
+async def admin_worker_detail(
+    user: CurrentUser,
+    worker: str,
+    year: Annotated[Optional[int], Query()] = None,
+    month: Annotated[Optional[int], Query()] = None,
+) -> dict:
+    require_auth(user)
     today = date.today()
     y = year or today.year
     m = month or today.month
@@ -189,77 +423,128 @@ async def worker_detail(worker: str, year: int = None, month: int = None):
     return {"worker": worker, "year": y, "month": m, "entries": entries}
 
 
-@router.get("/products")
-async def products():
+@admin_router.get("/products")
+async def admin_products(user: CurrentUser) -> dict:
+    require_auth(user)
     return {"products": get_all_products()}
 
 
-# ── Father-Only Routes ──────────────────────────────
-
-@router.post("/record")
-async def record_work(worker: str, product_code: str, quantity: int, request: Request):
-    user = get_current_user(request)
+@admin_router.post("/record", response_model=ActionOut)
+async def admin_record_work(
+    data: RecordWorkIn,
+    user: CurrentUser,
+    request: Request = None,
+) -> ActionOut:
     require_father(user)
-    result = log_production_json(
-        f'[{{"worker":"{worker}","product_code":"{product_code}","quantity":{quantity}}}]'
-    )
-    return {"status": "ok", "message": result}
+    entry = json.dumps({"worker": data.worker, "product_code": data.product_code, "quantity": data.quantity})
+    result = log_production_json(f"[{entry}]")
+    return ActionOut(message=result)
 
 
-@router.post("/record-text")
-async def record_work_text(text: str, request: Request):
-    user = get_current_user(request)
+@admin_router.post("/rejection", response_model=ActionOut)
+async def admin_add_rejection(data: RejectionIn, user: CurrentUser) -> ActionOut:
     require_father(user)
-    return {"status": "error", "message": "Text input removed. Use /record with JSON or chat with the agent."}
-
-
-@router.post("/rejection")
-async def add_rejection(year: int, month: int, product_code: str, total_qty: int, excluded_workers: str = "[]", request: Request = None):
-    user = get_current_user(request)
-    require_father(user)
-    import json
     from tools.rejection_tools import log_rejection as rej_log
-    excluded = json.loads(excluded_workers)
-    result = rej_log(year, month, product_code, total_qty, excluded)
-    return {"status": "ok", "message": result}
+    excluded = json.loads(data.excluded_workers)
+    result = rej_log(data.year, data.month, data.product_code, data.total_qty, excluded)
+    return ActionOut(message=result)
 
 
-@router.post("/advance")
-async def add_advance(worker: str, amount: float, year: int, month: int, description: str = "", request: Request = None):
-    user = get_current_user(request)
+@admin_router.post("/advance", response_model=ActionOut)
+async def admin_add_advance(data: AdvanceIn, user: CurrentUser) -> ActionOut:
     require_father(user)
     from tools.advance_tools import record_advance as adv_rec
-    result = adv_rec(worker, amount, year, month, description)
-    return {"status": "ok", "message": result}
+    result = adv_rec(data.worker, data.amount, data.year, data.month, data.description)
+    return ActionOut(message=result)
 
 
-@router.post("/payslip")
-async def generate_payslip(year: int, month: int, worker: str = "", request: Request = None):
-    user = get_current_user(request)
+@admin_router.post("/payslip", response_model=ActionOut)
+async def admin_generate_payslip(data: PayslipIn, user: CurrentUser) -> ActionOut:
     require_father(user)
     from agent_system.orchestrator import generate_payslip_tool
-    result = generate_payslip_tool(year, month, worker or None)
-    return {"status": "ok", "message": result}
+    result = generate_payslip_tool(data.year, data.month, data.worker or None)
+    return ActionOut(message=result)
 
 
-@router.post("/email")
-async def send_email_report(period: str = "daily", year: int = None, month: int = None, day: int = None, request: Request = None):
-    user = get_current_user(request)
-    require_father(user)
-    from tools.email_tools import send_report
+@admin_router.get("/payslips")
+async def admin_list_payslips(user: CurrentUser, year: int = 0, month: int = 0) -> dict:
+    require_auth(user)
+    from config import PDF_DIR, EXCEL_SLIPS_DIR
     today = date.today()
     y = year or today.year
     m = month or today.month
-    d = day or today.day
-    result = send_report(period, y, m, d)
-    return {"status": "ok", "message": result}
+    pdfs = []
+    excels = []
+    if PDF_DIR.exists():
+        for f in sorted(PDF_DIR.glob(f"*_{y}_{m:02d}.pdf")):
+            pdfs.append(f.stem)
+    if EXCEL_SLIPS_DIR.exists():
+        for f in sorted(EXCEL_SLIPS_DIR.glob(f"*_{y}_{m:02d}.xlsx")):
+            excels.append(f.stem)
+    return {"year": y, "month": m, "pdfs": pdfs, "excels": excels}
 
 
-@router.post("/chat")
-async def agent_chat(text: str, request: Request = None):
-    user = get_current_user(request)
+@admin_router.get("/payslip/pdf/{worker}/{year}/{month}")
+async def admin_download_payslip_pdf(worker: str, year: int, month: int, user: CurrentUser) -> FileResponse:
+    require_auth(user)
+    from config import PDF_DIR
+    filepath = PDF_DIR / f"{worker}_{year}_{month:02d}.pdf"
+    if not filepath.exists():
+        raise HTTPException(404, "Payslip not found")
+    return FileResponse(
+        str(filepath),
+        filename=f"{worker}_{year}_{month:02d}.pdf",
+        media_type="application/pdf",
+    )
+
+
+@admin_router.get("/payslip/excel/{worker}/{year}/{month}")
+async def admin_download_payslip_excel(worker: str, year: int, month: int, user: CurrentUser) -> FileResponse:
+    require_auth(user)
+    from config import EXCEL_SLIPS_DIR
+    filepath = EXCEL_SLIPS_DIR / f"{worker}_{year}_{month:02d}.xlsx"
+    if not filepath.exists():
+        raise HTTPException(404, "Payslip not found")
+    return FileResponse(
+        str(filepath),
+        filename=f"{worker}_{year}_{month:02d}.xlsx",
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+
+@admin_router.post("/email", response_model=ActionOut)
+async def admin_send_email_report(data: EmailReportIn, user: CurrentUser) -> ActionOut:
     require_father(user)
-    import asyncio
+    from tools.email_tools import send_report
+    today = date.today()
+    result = send_report(data.period, data.year or today.year, data.month or today.month, data.day or today.day)
+    return ActionOut(message=result)
+
+
+@admin_router.post("/chat", response_model=ChatOut)
+async def admin_agent_chat(data: ChatIn, user: CurrentUser) -> ChatOut:
+    require_father(user)
     from agent_system.orchestrator import chat
-    result = await asyncio.to_thread(asyncio.run, chat(text))
-    return {"status": "ok", "response": result}
+    result = await chat(data.text)
+    return ChatOut(response=result)
+
+
+@admin_router.post("/chat/stream")
+async def admin_agent_chat_stream(data: ChatIn, user: CurrentUser) -> StreamingResponse:
+    require_father(user)
+    from agent_system.orchestrator import stream_chat
+    return StreamingResponse(
+        stream_chat(data.text),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@admin_router.post("/backfill")
+async def admin_backfill(user: CurrentUser) -> dict:
+    require_father(user)
+    from tools.database import backfill_history
+    return backfill_history()

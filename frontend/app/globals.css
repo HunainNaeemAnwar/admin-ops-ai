@@ -1,0 +1,10 @@
+@import "tailwindcss";
+
+@theme inline {
+  --color-brand-blue: #1a73e8;
+}
+
+body {
+  background-color: #f9fafb;
+  font-family: "Inter", sans-serif;
+}
