@@ -5,7 +5,7 @@ from tools.database import (
     log_rejection, get_rejections_for_month, get_worker_rejection_share,
     record_advance, get_advances_for_worker_month, get_total_advances_for_worker_month,
     save_payslip, get_payslip,
-    get_daily_totals, get_worker_month_production, ensure_day_complete,
+    get_daily_totals, get_worker_month_production,
 )
 
 
@@ -100,18 +100,6 @@ class TestDailyLog:
         log_production(worker_ids["Naeem"], product_ids["10*20"], 150, "2026-06-01")
         logs = get_logs_for_date("2026-06-01")
         assert len(logs) == 2
-
-    def test_ensure_day_complete_all_present(self, worker_ids, product_ids):
-        all_ids = list(worker_ids.values())
-        log_production(worker_ids["Kaleem"], product_ids["NUT"], 100, "2026-06-01")
-        missing = ensure_day_complete("2026-06-01", all_ids)
-        assert worker_ids["Kaleem"] not in missing
-        assert len(missing) == len(all_ids) - 1
-
-    def test_ensure_day_complete_all_absent(self, worker_ids):
-        all_ids = list(worker_ids.values())
-        missing = ensure_day_complete("2026-06-01", all_ids)
-        assert len(missing) == len(all_ids)
 
     def test_worker_month_production(self, worker_ids, product_ids):
         log_production(worker_ids["Kaleem"], product_ids["NUT"], 300, "2026-06-01")

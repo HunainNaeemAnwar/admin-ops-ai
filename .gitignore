@@ -53,6 +53,12 @@ test_prompt.txt
 history/
 summary.md
 
+# Next.js / Node.js (frontend/)
+node_modules/
+frontend/.next/
+frontend/out/
+frontend/next-env.d.ts
+
 # Test & coverage
 .coverage
 .coverage.*

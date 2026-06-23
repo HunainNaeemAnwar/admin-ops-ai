@@ -100,8 +100,11 @@ def main():
                         elif cmd == "cleanup":
                             result = await mem.cleanup()
                             print(f"\n[Memory: {result}]")
+                        elif cmd == "cost":
+                            from agent_system.cost_tracker import format_session_cost
+                            print(f"\n{format_session_cost(sid)}")
                         else:
-                            print("\n[Memory: Unknown command. Use: /memory status | compact | delete | cleanup]")
+                            print("\n[Memory: Unknown command. Use: /memory status | compact | delete | cleanup | cost]")
                         continue
 
                     print("\nAccountant Agent: Thinking...")
@@ -117,18 +120,67 @@ def main():
 
     elif mode == "web":
         import uvicorn
+        from contextlib import asynccontextmanager
         from fastapi import FastAPI
+        from fastapi.middleware.cors import CORSMiddleware
         from fastapi.staticfiles import StaticFiles
         from fastmcp.utilities.lifespan import combine_lifespans
 
         from mcp_server import mcp_app as mcp_asgi
+        from web_ui.middleware import (
+            RateLimitMiddleware, RateLimiter,
+            CorrelationIDMiddleware,
+            register_shutdown_hook, setup_signal_handlers,
+        )
 
-        app = FastAPI(title="Admin Ops AI", version="1.0.0", lifespan=combine_lifespans(mcp_asgi.lifespan))
+        @asynccontextmanager
+        async def _warmup_lifespan(app):
+            try:
+                from openai import AsyncOpenAI
+                from config import CEREBRAS_API_KEY, DEFAULT_OPENAI_BASE_URL, CEREBRAS_MODEL
+                client = AsyncOpenAI(api_key=CEREBRAS_API_KEY, base_url=DEFAULT_OPENAI_BASE_URL)
+                await client.chat.completions.create(
+                    model=CEREBRAS_MODEL,
+                    messages=[{"role": "user", "content": "ping"}],
+                    max_tokens=1,
+                )
+                print("[Warmup] Cerebras API connection ready")
+            except Exception as e:
+                print(f"[Warmup] Cerebras API not reachable: {e}")
+            yield
+
+        merged_lifespan = combine_lifespans(mcp_asgi.lifespan, _warmup_lifespan)
+        app = FastAPI(title="Admin Ops AI", version="1.0.0", lifespan=merged_lifespan)
+        app.add_middleware(CorrelationIDMiddleware)
+        app.add_middleware(RateLimitMiddleware, rate_limiter=RateLimiter(max_requests=120, window_seconds=60))
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=["http://localhost:3000"],
+            allow_credentials=True,
+            allow_methods=["GET", "POST"],
+            allow_headers=["Content-Type"],
+        )
         app.mount("/static", StaticFiles(directory="web_ui/static"), name="static")
         app.mount("/mcp", mcp_asgi)
 
-        from web_ui.routes import router
+        from web_ui.routes import router, admin_router
         app.include_router(router)
+        app.include_router(admin_router)
+
+        from web_ui.middleware import (
+            global_validation_error_handler, global_http_error_handler,
+            global_unhandled_error_handler, MaxBodySizeMiddleware,
+        )
+        from fastapi.exceptions import RequestValidationError, HTTPException as FastAPIHTTPException
+        from starlette.exceptions import HTTPException as StarletteHTTPException
+        app.add_middleware(MaxBodySizeMiddleware, max_body_size=1_048_576)
+        app.add_exception_handler(RequestValidationError, global_validation_error_handler)
+        app.add_exception_handler(FastAPIHTTPException, global_http_error_handler)
+        app.add_exception_handler(StarletteHTTPException, global_http_error_handler)
+        app.add_exception_handler(Exception, global_unhandled_error_handler)
+
+        register_shutdown_hook(lambda: print("[Shutdown] DB connections closed."))
+        setup_signal_handlers()
 
         if not GMAIL_CLIENT_ID or GMAIL_CLIENT_ID == "your_client_id":
             print("\n⚠️  GMAIL_CLIENT_ID not configured!")
@@ -147,9 +199,18 @@ def main():
         except KeyboardInterrupt:
             print("\nScheduler stopped.")
 
+    elif mode == "backfill":
+        print("Backfilling history from daily_log...")
+        from tools.database import backfill_history
+        result = backfill_history()
+        print(result["message"])
+        if result["months"]:
+            for m in result["months"]:
+                print(f"  Archived: {m['year']}-{m['month']:02d}")
+
     else:
         print(f"Unknown mode: {mode}")
-        print("Usage: python main.py [mcp|agent|web|scheduler]")
+        print("Usage: python main.py [mcp|agent|web|scheduler|backfill]")
 
 
 if __name__ == "__main__":
