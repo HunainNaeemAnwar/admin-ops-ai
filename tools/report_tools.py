@@ -21,22 +21,22 @@ def get_daily_status(date_str: Optional[str] = None) -> str:
         )
 
     present = set()
-    totals = {}
+    entry_lines = []
     for log in logs:
         if log["status"] == "present":
             present.add(log["worker_name"])
-            prod = log["product_code"]
-            totals[prod] = totals.get(prod, 0) + log["quantity"]
+            entry_lines.append(
+                f"  ID#{log['id']} | {log['worker_name']} | {log['product_code']} | {log['quantity']} pcs"
+            )
 
     absent = [w for w in FIXED_WORKERS if w not in present]
     lines = [
         f"DATA_FOUND: {len(logs)} entries for {date_str}",
         f"Workers present ({len(present)}): {', '.join(sorted(present))}",
     ]
-    if totals:
-        lines.append("Product totals:")
-        for code, qty in sorted(totals.items()):
-            lines.append(f"  {code}: {qty} pcs")
+    if entry_lines:
+        lines.append("Entries (use ID for update):")
+        lines.extend(entry_lines)
     if absent:
         lines.append(f"Absent: {', '.join(absent)}")
     return "\n".join(lines)

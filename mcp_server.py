@@ -12,7 +12,7 @@ from tools.rejection_tools import log_rejection
 from tools.advance_tools import record_advance
 from tools.report_tools import get_daily_status, get_summary
 from tools.email_tools import send_report
-from tools.payslip_tools import generate_pdf_payslip, generate_excel_payslip
+from tools.payslip_tools import generate_pdf_payslip
 
 mcp = FastMCP("accountant_mcp")
 
@@ -72,10 +72,9 @@ def get_production_summary(period: str = "daily", year: Optional[int] = None, mo
 
 @mcp.tool()
 def generate_worker_payslip(worker: str, year: int, month: int) -> str:
-    """Generate PDF + Excel payslip for a worker."""
+    """Generate PDF payslip for a worker."""
     pdf = generate_pdf_payslip(worker, year, month)
-    xls = generate_excel_payslip(worker, year, month)
-    return f"PDF: {pdf}\nExcel: {xls}"
+    return f"PDF: {pdf}"
 
 
 @mcp.tool()

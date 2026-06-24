@@ -253,7 +253,6 @@ def generate_worker_payslip(worker: str, year: int, month: int) -> dict | None:
 
 
 def generate_payslip_files(worker: str, year: int, month: int) -> tuple[str, str]:
-    from tools.payslip_tools import generate_pdf_payslip, generate_excel_payslip
+    from tools.payslip_tools import generate_pdf_payslip
     pdf = generate_pdf_payslip(worker, year, month)
-    xls = generate_excel_payslip(worker, year, month)
-    return pdf, xls
+    return pdf, ""

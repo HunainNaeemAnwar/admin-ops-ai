@@ -2,7 +2,7 @@ from pathlib import Path
 
 from tools.production_tools import log_production_json
 from tools.export_tools import generate_excel_report
-from tools.payslip_tools import generate_pdf_payslip, generate_excel_payslip
+from tools.payslip_tools import generate_pdf_payslip
 from tools.database import get_worker_id, get_worker_month_production
 from tools.rejection_tools import log_rejection
 from tools.advance_tools import record_advance
@@ -50,15 +50,6 @@ class TestPayslipGeneration:
         from datetime import date
         today = date.today()
         path = generate_pdf_payslip("Kaleem", today.year, today.month)
-        assert path is not None
-        assert Path(path).exists()
-        Path(path).unlink()
-
-    def test_excel_payslip_generated(self):
-        log_production_json('[{"worker":"Kaleem","product_code":"NUT","quantity":300}]')
-        from datetime import date
-        today = date.today()
-        path = generate_excel_payslip("Kaleem", today.year, today.month)
         assert path is not None
         assert Path(path).exists()
         Path(path).unlink()

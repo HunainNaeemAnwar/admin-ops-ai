@@ -116,15 +116,11 @@ export default function PayslipsPage() {
                   <th className="whitespace-nowrap px-4 py-2 text-center font-medium text-gray-500">
                     PDF
                   </th>
-                  <th className="whitespace-nowrap px-4 py-2 text-center font-medium text-gray-500">
-                    Excel
-                  </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-200">
                 {allWorkers.map((p) => {
                   const hasPdf = data.pdfs.includes(p.key)
-                  const hasExcel = data.excels.includes(p.key)
                   return (
                     <tr key={p.key} className="hover:bg-gray-50">
                       <td className="whitespace-nowrap px-4 py-2 font-medium text-gray-700">
@@ -140,21 +136,6 @@ export default function PayslipsPage() {
                           >
                             <Download size={14} />
                             PDF
-                          </a>
-                        ) : (
-                          <span className="text-gray-300">-</span>
-                        )}
-                      </td>
-                      <td className="whitespace-nowrap px-4 py-2 text-center">
-                        {hasExcel ? (
-                          <a
-                            href={`${backendUrl}/admin/payslip/excel/${p.worker}/${p.year}/${p.month}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inline-flex items-center gap-1 rounded-md bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700 hover:bg-blue-100"
-                          >
-                            <Download size={14} />
-                            Excel
                           </a>
                         ) : (
                           <span className="text-gray-300">-</span>

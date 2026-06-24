@@ -90,19 +90,19 @@ async def _greeting_handler(
 PERSONA = """You are a senior factory accountant with 20 years of experience at a manufacturing plant.
 You speak Urdu and English mix naturally (Roman Urdu).
 You are precise, professional, but friendly with workers.
-You NEVER share financial details with anyone except the father.
+Financial details are shared only with the father.
 You double-check numbers before confirming."""
 
 PRODUCTION_RULES = """<rules>
 - Production entry → log_production_tool. Include "date":"YYYY-MM-DD" for past dates (omit for today).
 - Multi-row tables → parse_table_tool
 - Worker absent → mark_absent_tool with optional reason (e.g. "Eid", "sick")
-- Edit entry → update_entry_tool
-- Production + absent together → batch_daily_update_tool
+- Edit entry → update_entry_tool. Pass worker, product_code, date_str, entry_id=0 to auto-lookup.
+- Batch production + absent → batch_daily_update_tool
 - Tool warns "already has data" → tell user, ask for confirmation resend
 - Multiple workers absent same date → workers="all"
 - Worker already absent → report to user, don't retry
-- NEVER create fake data. If unsure, ask.
+- Only record data explicitly stated by user. If information is missing, ask for it.
 </rules>"""
 
 REPORTING_RULES = """<rules>
@@ -110,22 +110,22 @@ REPORTING_RULES = """<rules>
 - Summary (daily/weekly/monthly) → get_summary_tool
 - Catalog/list → list_catalog_tool
 - Email manager (quantities only) → send_report_tool
-- NEVER share individual worker pay or financials.
+- Share only quantity-based summaries. Financial data is confidential to father only.
+- Tool returns "NO_DATA" → tell user no data exists for that date; do NOT guess or speculate.
 </rules>"""
 
 FINANCE_RULES = """<rules>
 - Department rejection → log_rejection_tool (equal distribution)
 - Worker advance → record_advance_tool
-- Generate payslip PDF+Excel → generate_payslip_tool
+- Generate payslip PDF → generate_payslip_tool
 - If month/year not specified, use current month (June 2026)
-- Generate immediately unless amounts seem wrong
+- Generate immediately. If gross amount is 0 (no production data), inform user and skip payslip.
 </rules>"""
 
 
 HANDOFF_FOOTER = """
 You are now handling the user directly. Respond completely in Roman Urdu mixed with English.
-Use available tools as needed. After tool execution, explain the result to the user in a friendly way.
-Do NOT hand off back to the Router — you are the final responder."""
+Use available tools as needed. After tool execution, explain the result to the user in a friendly way."""
 
 
 def _production_instructions(ctx, agent) -> str:
@@ -178,14 +178,14 @@ Today: {date.today()}</context>
 
 <rules>
 1. Identify intent from user message
-2. Call the delegate tool immediately — do NOT ask extra questions
+2. If enough info present, delegate immediately with sensible defaults (today, current month).
 3. Return the specialist's response as-is
 
 Routing:
 - Production data entry, tables, absences, edits → delegate_production
 - Summary, status, catalog, email reports → delegate_reporting
 - Rejections, advances, payslips → delegate_finance
-- Greeting, empty, or uncertain → respond naturally (do NOT call any tool)
+- Greeting → greet. Random/unclear input → politely ask what they need.
 - Output says "resend to overwrite" / "already exists" → include in your response
 
 Response format: Always respond in Roman Urdu mixed with English, matching user's language.
@@ -203,6 +203,16 @@ User: aj ka status kya hai
 
 User: Kaleem ki payslip banao
 (delegate_finance)
+
+User: 22 June ko Naeem ka data?
+(delegate_reporting)
+→ ReportingAgent calls get_daily_status_tool(date_str="2026-06-22")
+
+User: kya haal hai?
+Aapka shukriya! Main yahan hoon. Koi production, report, ya payslip ka kaam ho toh bataiye.
+
+User: random gibberish or unclear input
+Ask politely: "Bhai, kya karna chahte hain? Production, report, ya payslip?"
 </examples>"""
 
 
@@ -232,6 +242,12 @@ def log_production_tool(entries_json: str) -> str:
             entries = [entries]
         if not isinstance(entries, list):
             return "Must be a JSON array"
+        for entry in entries:
+            date_str = entry.get("date", "")
+            if date_str:
+                year = int(date_str[:4])
+                if year < 2026:
+                    return f"⚠️ System records start from 2026. Cannot log data for year {year}."
         return record_production_batch(entries)
     except (json.JSONDecodeError, TypeError):
         return "Invalid JSON format."
@@ -279,18 +295,43 @@ def mark_absent_tool(workers: str, date_str: Optional[str] = None, reason: Optio
 
 
 @function_tool
-def update_entry_tool(entry_id: int, new_quantity: int, reason: Optional[str] = None) -> str:
-    """Update the quantity of an existing production entry. Use when worker corrects a previous entry.
+def update_entry_tool(entry_id: int = 0, new_quantity: int = 0, reason: Optional[str] = None,
+                       worker: Optional[str] = None, product_code: Optional[str] = None,
+                       date_str: Optional[str] = None) -> str:
+    """Update the quantity of an existing production entry.
+
+    BEST APPROACH: Provide worker, product_code, and date_str to auto-lookup the correct entry.
+    Alternatively, provide entry_id if you already know it from get_daily_status_tool output.
 
     Args:
-        entry_id: Entry ID from daily_log (shown in status/summary outputs)
+        entry_id: Entry ID (e.g. 42). Pass 0 if unknown — use worker/product_code/date_str instead.
         new_quantity: New quantity value (must be positive)
         reason: Optional reason for the change
+        worker: Worker name (e.g. 'Naeem') — used for auto-lookup if entry_id is 0
+        product_code: Product code (e.g. 'NUT') — used for auto-lookup if entry_id is 0
+        date_str: Date YYYY-MM-DD — used for auto-lookup if entry_id is 0
 
     Returns:
         Old vs new values confirmation
     """
-    return update_production_entry(entry_id, new_quantity, reason or "")
+    actual_id = entry_id
+
+    # If entry_id not provided, auto-lookup
+    if not actual_id or actual_id <= 0:
+        if not worker or not product_code or not date_str:
+            return "Give entry_id OR provide worker, product_code, and date_str for lookup."
+        from tools.database import get_logs_for_date
+        rows = get_logs_for_date(date_str)
+        match = None
+        for r in rows:
+            if r["worker_name"].lower() == worker.lower() and r["product_code"].upper() == product_code.upper():
+                match = r
+                break
+        if not match:
+            return f"No {worker} / {product_code} entry found for {date_str}."
+        actual_id = match["id"]
+
+    return update_production_entry(actual_id, new_quantity, reason or "")
 
 
 @function_tool
@@ -340,15 +381,20 @@ def batch_daily_update_tool(entries_json: str, absent_workers: Optional[str] = N
 
 @function_tool
 def get_daily_status_tool(date_str: Optional[str] = None) -> str:
-    """Check production data for a date — which workers have data, which are absent, and product totals.
+    """Check production data for a specific date. Returns which workers have data, which are absent, and product totals.
 
     Args:
-        date_str: Date in YYYY-MM-DD format (default: today)
+        date_str: Date in YYYY-MM-DD format ONLY, e.g. "2026-06-22". Do NOT pass natural language. Pass null/None for today.
 
     Returns:
         Status message with present/absent workers and product totals
     """
-    return get_date_status(date_str or "")
+    ds = date_str or date.today().isoformat()
+    if not re.match(r"^\d{4}-\d{2}-\d{2}$", ds):
+        return f"⚠️ Invalid date format: '{date_str}'. Use YYYY-MM-DD, e.g. '2026-06-22'."
+    if int(ds[:4]) < 2026:
+        return "⚠️ System records start from 2026. Is year ka data exist nahi karta."
+    return get_date_status(ds)
 
 
 @function_tool
@@ -365,7 +411,10 @@ def get_summary_tool(period: str = "daily", year: Optional[int] = None, month: O
         Formatted summary with product totals per worker per day
     """
     today = date.today()
-    return get_production_summary(period, year or today.year, month or today.month, day or today.day)
+    y = year or today.year
+    if y < 2026:
+        return "⚠️ System records start from 2026. Please select year >= 2026."
+    return get_production_summary(period, y, month or today.month, day or today.day)
 
 
 @function_tool
@@ -440,7 +489,7 @@ def record_advance_tool(worker: str, amount: float, year: int, month: int, descr
 
 @function_tool
 def generate_payslip_tool(year: int, month: int, worker: Optional[str] = None) -> str:
-    """Generate PDF + Excel payslip for one worker or all workers for a given month.
+    """Generate PDF payslip for one worker or all workers for a given month.
     Calculates gross (quantity × rate), rejection deduction, advance deduction, tax percentage, and net payable.
 
     Args:
@@ -454,6 +503,8 @@ def generate_payslip_tool(year: int, month: int, worker: Optional[str] = None) -
     today = date.today()
     y = year or today.year
     m = month or today.month
+    if y < 2026:
+        return "⚠️ Payslips only available from 2026 onwards."
 
     distribution = get_rejection_distribution(y, m)
 
@@ -516,10 +567,11 @@ def generate_payslip_tool(year: int, month: int, worker: Optional[str] = None) -
 
 # ── Agent factory ─────────────────────────────────────
 
-def _create_agents(model_override=None):
-    model = model_override or ACTIVE_MODEL
+def _create_agents(router_model_override=None, specialist_model_override=None):
+    s_model = specialist_model_override or router_model_override or ACTIVE_MODEL
+    r_model = router_model_override or ACTIVE_MODEL
     base_settings = ModelSettings(
-        temperature=0.1,
+        temperature=0.5,
         top_p=0.9,
         max_tokens=2000,
         parallel_tool_calls=True,
@@ -528,7 +580,7 @@ def _create_agents(model_override=None):
     production_agent = Agent(
         name="ProductionAgent",
         instructions=_production_instructions,
-        model=model,
+        model=s_model,
         model_settings=base_settings,
         tools=[
             log_production_tool,
@@ -542,7 +594,7 @@ def _create_agents(model_override=None):
     reporting_agent = Agent(
         name="ReportingAgent",
         instructions=_reporting_instructions,
-        model=model,
+        model=s_model,
         model_settings=base_settings,
         tools=[
             get_daily_status_tool,
@@ -555,7 +607,7 @@ def _create_agents(model_override=None):
     finance_agent = Agent(
         name="FinanceAgent",
         instructions=_finance_instructions,
-        model=model,
+        model=s_model,
         model_settings=base_settings,
         tools=[
             log_rejection_tool,
@@ -565,7 +617,7 @@ def _create_agents(model_override=None):
     )
 
     router_settings = ModelSettings(
-        temperature=0.1,
+        temperature=0.3,
         top_p=0.9,
         max_tokens=2000,
         parallel_tool_calls=False,
@@ -573,7 +625,7 @@ def _create_agents(model_override=None):
     router = Agent(
         name="Router",
         instructions=_router_instructions,
-        model=model,
+        model=r_model,
         model_settings=router_settings,
         input_guardrails=[_greeting_handler, _input_sanitizer],
         tools=[
@@ -600,18 +652,26 @@ async def chat(user_input: str, session_id: str = "default") -> str:
     memory = _get_memory(session_id)
     await memory.cleanup()
 
-    from config import LLM_PROVIDER, MISTRAL_API_KEY, GEMINI_API_KEY, CEREBRAS_API_KEY, OPENAI_API_KEY
+    from config import LLM_PROVIDER
+    from agent_system.provider import _models as all_models
 
-    available = {"mistral": bool(MISTRAL_API_KEY), "gemini": bool(GEMINI_API_KEY), "cerebras": bool(CEREBRAS_API_KEY), "openai": bool(OPENAI_API_KEY)}
-    primary = LLM_PROVIDER if available.get(LLM_PROVIDER, False) else next((m for m, v in available.items() if v), "cerebras")
-    fallback_chain = [primary] + [m for m in ["mistral", "gemini", "cerebras", "openai"] if m != primary and available[m]]
+    primary = LLM_PROVIDER if LLM_PROVIDER in all_models else "gemini"
+    fallback_chain = ["mistral", "gemini", "gemini-3.1", "cerebras"]
+    fallback_chain = [m for m in fallback_chain if m in all_models]
+    if primary in fallback_chain:
+        fallback_chain.remove(primary)
+    fallback_chain.insert(0, primary)
     if not fallback_chain:
-        fallback_chain = ["cerebras"]
+        fallback_chain = ["mistral"]
     last_error = ""
 
     for attempt, model_name in enumerate(fallback_chain):
-        model = get_model_by_name(model_name)
-        agent = _create_agents(model_override=model)
+        specialist_model = get_model_by_name(model_name)
+        router_model = specialist_model
+        agent = _create_agents(
+            router_model_override=router_model,
+            specialist_model_override=specialist_model,
+        )
         try:
             result = await asyncio.wait_for(
                 Runner.run(
@@ -661,16 +721,25 @@ async def stream_chat(user_input: str, session_id: str = "default"):
     memory = _get_memory(session_id)
     await memory.cleanup()
 
-    from config import LLM_PROVIDER, MISTRAL_API_KEY, GEMINI_API_KEY, CEREBRAS_API_KEY, OPENAI_API_KEY
-    available = {"mistral": bool(MISTRAL_API_KEY), "gemini": bool(GEMINI_API_KEY), "cerebras": bool(CEREBRAS_API_KEY), "openai": bool(OPENAI_API_KEY)}
-    primary = LLM_PROVIDER if available.get(LLM_PROVIDER, False) else next((m for m, v in available.items() if v), "cerebras")
-    fallback_chain = [primary] + [m for m in ["mistral", "gemini", "cerebras", "openai"] if m != primary and available[m]]
+    from config import LLM_PROVIDER
+    from agent_system.provider import _models as all_models
+
+    primary = LLM_PROVIDER if LLM_PROVIDER in all_models else "gemini"
+    fallback_chain = ["mistral", "gemini", "gemini-3.1", "cerebras"]
+    fallback_chain = [m for m in fallback_chain if m in all_models]
+    if primary in fallback_chain:
+        fallback_chain.remove(primary)
+    fallback_chain.insert(0, primary)
     if not fallback_chain:
-        fallback_chain = ["cerebras"]
+        fallback_chain = ["mistral"]
 
     for attempt, model_name in enumerate(fallback_chain):
-        model = get_model_by_name(model_name)
-        agent = _create_agents(model_override=model)
+        specialist_model = get_model_by_name(model_name)
+        router_model = specialist_model
+        agent = _create_agents(
+            router_model_override=router_model,
+            specialist_model_override=specialist_model,
+        )
         try:
             result = Runner.run_streamed(
                 agent,

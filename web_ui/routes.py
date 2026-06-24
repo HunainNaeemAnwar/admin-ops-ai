@@ -469,19 +469,15 @@ async def admin_generate_payslip(data: PayslipIn, user: CurrentUser) -> ActionOu
 @admin_router.get("/payslips")
 async def admin_list_payslips(user: CurrentUser, year: int = 0, month: int = 0) -> dict:
     require_auth(user)
-    from config import PDF_DIR, EXCEL_SLIPS_DIR
+    from config import PDF_DIR
     today = date.today()
     y = year or today.year
     m = month or today.month
     pdfs = []
-    excels = []
     if PDF_DIR.exists():
         for f in sorted(PDF_DIR.glob(f"*_{y}_{m:02d}.pdf")):
             pdfs.append(f.stem)
-    if EXCEL_SLIPS_DIR.exists():
-        for f in sorted(EXCEL_SLIPS_DIR.glob(f"*_{y}_{m:02d}.xlsx")):
-            excels.append(f.stem)
-    return {"year": y, "month": m, "pdfs": pdfs, "excels": excels}
+    return {"year": y, "month": m, "pdfs": pdfs, "excels": []}
 
 
 @admin_router.get("/payslip/pdf/{worker}/{year}/{month}")
@@ -497,19 +493,6 @@ async def admin_download_payslip_pdf(worker: str, year: int, month: int, user: C
         media_type="application/pdf",
     )
 
-
-@admin_router.get("/payslip/excel/{worker}/{year}/{month}")
-async def admin_download_payslip_excel(worker: str, year: int, month: int, user: CurrentUser) -> FileResponse:
-    require_auth(user)
-    from config import EXCEL_SLIPS_DIR
-    filepath = EXCEL_SLIPS_DIR / f"{worker}_{year}_{month:02d}.xlsx"
-    if not filepath.exists():
-        raise HTTPException(404, "Payslip not found")
-    return FileResponse(
-        str(filepath),
-        filename=f"{worker}_{year}_{month:02d}.xlsx",
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    )
 
 
 @admin_router.post("/email", response_model=ActionOut)

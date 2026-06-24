@@ -31,9 +31,14 @@ if MISTRAL_API_KEY:
     )
 
 if GEMINI_API_KEY:
+    _gemini_client = AsyncOpenAI(api_key=GEMINI_API_KEY, base_url="https://generativelanguage.googleapis.com/v1beta/openai/")
     _models["gemini"] = OpenAIChatCompletionsModel(
-        model=GEMINI_MODEL,
-        openai_client=AsyncOpenAI(api_key=GEMINI_API_KEY, base_url="https://generativelanguage.googleapis.com/v1beta/openai/"),
+        model="gemini-2.5-flash",
+        openai_client=_gemini_client,
+    )
+    _models["gemini-3.1"] = OpenAIChatCompletionsModel(
+        model="gemini-3.1-flash-lite",
+        openai_client=_gemini_client,
     )
 
 if CEREBRAS_API_KEY:

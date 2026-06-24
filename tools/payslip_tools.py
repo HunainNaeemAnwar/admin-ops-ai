@@ -4,7 +4,7 @@ from tools.database import (
     get_payslip, get_total_advances_for_worker_month, get_all_products,
 )
 from tools.rejection_tools import get_distribution_for_month
-from tools.payslip_template import render_pdf_payslip, render_excel_payslip
+from tools.payslip_template import render_pdf_payslip
 
 
 def _build_payslip_data(worker: str, year: int, month: int) -> dict | None:
@@ -69,8 +69,3 @@ def generate_pdf_payslip(worker: str, year: int, month: int) -> str:
     return render_pdf_payslip(data, worker, year, month)
 
 
-def generate_excel_payslip(worker: str, year: int, month: int) -> str:
-    data = _build_payslip_data(worker, year, month)
-    if not data:
-        return f"No data for {worker} in {year}-{month:02d}"
-    return render_excel_payslip(data, worker, year, month)

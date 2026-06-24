@@ -8,11 +8,7 @@ from reportlab.lib.styles import ParagraphStyle
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 
-import openpyxl
-from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-from openpyxl.worksheet.properties import PageSetupProperties
-
-from config import PDF_DIR, EXCEL_SLIPS_DIR, TAX_PERCENTAGE
+from config import PDF_DIR, TAX_PERCENTAGE
 
 # Register fonts
 pdfmetrics.registerFont(TTFont("NotoNastaliqUrdu", "/usr/share/fonts/truetype/noto/NotoNastaliqUrdu-Regular.ttf"))
@@ -37,15 +33,6 @@ URDU_FONT_BOLD = "NotoNastaliqUrdu-Bold"
 CELL_PADDING = 6
 SECTION_GAP = 2 * mm
 TABLE_GAP = 8 * mm
-
-# Excel Colors
-XL_NAVY = "1F3864"
-XL_STEEL = "4472C4"
-XL_LIGHT_GREY = "F2F2F2"
-XL_WHITE = "FFFFFF"
-XL_GREEN_BG = "E2EFDA"
-XL_DARK_GREEN = "548235"
-XL_DARK_RED = "C00000"
 
 
 def _format_month(month: int) -> str:
@@ -269,144 +256,4 @@ def render_pdf_payslip(data: dict, worker: str, year: int, month: int) -> str:
     return str(filepath)
 
 
-# ── EXCEL ──
-def render_excel_payslip(data: dict, worker: str, year: int, month: int) -> str:
-    filename = f"{worker}_{year}_{month:02d}.xlsx"
-    filepath = EXCEL_SLIPS_DIR / filename
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = "Pay Slip"
-    ws.sheet_properties.pageSetUpPr = PageSetupProperties(fitToPage=True)
 
-    header_fill = PatternFill(start_color=XL_NAVY, end_color=XL_NAVY, fill_type="solid")
-    header_font = Font(name=XL_FONT, color=XL_WHITE, bold=True, size=11)
-    alt_fill = PatternFill(start_color=XL_LIGHT_GREY, end_color=XL_LIGHT_GREY, fill_type="solid")
-
-    ws.merge_cells("A1:D1")
-    ws.cell(row=1, column=1, value=worker).font = Font(name=XL_FONT, bold=True, size=18, color=XL_WHITE)
-    for c in range(1, 5):
-        ws.cell(row=1, column=c).fill = header_fill
-        ws.cell(row=1, column=c).alignment = Alignment(horizontal="center", vertical="center")
-    ws.row_dimensions[1].height = 40
-
-    ws.merge_cells("A2:D2")
-    ws.cell(row=2, column=1, value=f"{_format_month(month)} {year}").font = Font(name=XL_FONT, size=11, color="666666")
-    ws.cell(row=2, column=1).alignment = Alignment(horizontal="center", vertical="center")
-    ws.row_dimensions[2].height = 24
-
-    ws.merge_cells("A3:D3")
-    ws.cell(row=3, column=1, value="").font = Font(name=XL_FONT, size=11)
-
-    product_totals = data.get("product_totals", {})
-    product_rates = data.get("product_rates", {})
-    rejection_share = data.get("worker_rejection_share", {})
-    has_rejections = any(rejection_share.values())
-    all_codes = sorted(set(list(product_totals.keys()) + list(rejection_share.keys())))
-
-    row = 5
-
-    def write_header(headers):
-        nonlocal row
-        for col, h in enumerate(headers, 1):
-            cell = ws.cell(row=row, column=col, value=h)
-            cell.font = header_font
-            cell.fill = header_fill
-            cell.alignment = Alignment(horizontal="center", vertical="center")
-        row += 1
-
-    def write_row(vals, alt=False, col_colors=None):
-        nonlocal row
-        for col, v in enumerate(vals, 1):
-            cell = ws.cell(row=row, column=col, value=v)
-            cell.font = Font(name=XL_FONT, size=11)
-            cell.alignment = Alignment(horizontal="center", vertical="center")
-            if alt:
-                cell.fill = alt_fill
-            if col_colors and col in col_colors:
-                cell.font = col_colors[col]
-        row += 1
-
-    # Rejections
-    if has_rejections:
-        ws.cell(row=row, column=1, value="REJECTIONS").font = Font(name=XL_FONT, bold=True, size=12, color=XL_NAVY)
-        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=4)
-        row += 2
-        write_header(["Product", "Rejected Qty", "", ""])
-        for i, code in enumerate(all_codes):
-            share = rejection_share.get(code, 0)
-            if share > 0:
-                write_row([code, share, "", ""], alt=(i % 2 == 1))
-        row += 1
-
-    # Production Summary
-    ws.cell(row=row, column=1, value="PRODUCTION SUMMARY").font = Font(name=XL_FONT, bold=True, size=12, color=XL_NAVY)
-    ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=4)
-    row += 2
-    write_header(["Product", "Total Qty", "Rejected", "Final Qty"])
-    red_font = Font(name=XL_FONT, size=11, color=XL_DARK_RED)
-    for i, code in enumerate(all_codes):
-        total_qty = product_totals.get(code, 0)
-        rej_qty = rejection_share.get(code, 0)
-        final_qty = total_qty - rej_qty
-        colors_map = {3: red_font} if rej_qty > 0 else None
-        write_row([code, total_qty, rej_qty, final_qty], alt=(i % 2 == 1), col_colors=colors_map)
-    row += 1
-
-    # Earnings
-    ws.cell(row=row, column=1, value="EARNINGS").font = Font(name=XL_FONT, bold=True, size=12, color=XL_NAVY)
-    ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=4)
-    row += 2
-    write_header(["Product", "Final Qty", "Rate (Rs)", "Amount (Rs)"])
-    for i, code in enumerate(all_codes):
-        total_qty = product_totals.get(code, 0)
-        final_qty = total_qty - rejection_share.get(code, 0)
-        rate = product_rates.get(code, 0)
-        amount = round(final_qty * rate, 2)
-        write_row([code, final_qty, rate, amount], alt=(i % 2 == 1))
-    row += 1
-
-    # Summary
-    ws.cell(row=row, column=1, value="SUMMARY").font = Font(name=XL_FONT, bold=True, size=12, color=XL_NAVY)
-    ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=4)
-    row += 2
-
-    sum_fill = PatternFill(start_color=XL_LIGHT_GREY, end_color=XL_LIGHT_GREY, fill_type="solid")
-    ws.cell(row=row, column=1, value="Gross Salary").font = Font(name=XL_FONT, bold=True, size=11, color=XL_NAVY)
-    ws.cell(row=row, column=2, value=data["gross_total"]).font = Font(name=XL_FONT, bold=True, size=11, color=XL_NAVY)
-    for c in range(1, 5):
-        ws.cell(row=row, column=c).fill = sum_fill
-    row += 1
-
-    if data["rejection_deduction"] > 0:
-        ws.cell(row=row, column=1, value="Rejection Deduction").font = Font(name=XL_FONT, size=11, color=XL_DARK_RED)
-        ws.cell(row=row, column=2, value=data["rejection_deduction"]).font = Font(name=XL_FONT, size=11, color=XL_DARK_RED)
-        row += 1
-    if data["advance_deduction"] > 0:
-        ws.cell(row=row, column=1, value="Advance Deduction").font = Font(name=XL_FONT, size=11, color=XL_DARK_RED)
-        ws.cell(row=row, column=2, value=data["advance_deduction"]).font = Font(name=XL_FONT, size=11, color=XL_DARK_RED)
-        row += 1
-    ws.cell(row=row, column=1, value=f"Tax Deduction ({TAX_PERCENTAGE}%)").font = Font(name=XL_FONT, size=11)
-    ws.cell(row=row, column=2, value=data["tax_total"]).font = Font(name=XL_FONT, size=11)
-    row += 1
-
-    net_fill = PatternFill(start_color=XL_GREEN_BG, end_color=XL_GREEN_BG, fill_type="solid")
-    green_border = Border(
-        top=Side(style="medium", color=XL_DARK_GREEN),
-        bottom=Side(style="medium", color=XL_DARK_GREEN),
-    )
-    ws.cell(row=row, column=1, value="NET PAYABLE SALARY").font = Font(name=XL_FONT, bold=True, size=13, color=XL_DARK_GREEN)
-    ws.cell(row=row, column=2, value=data["net_payable"]).font = Font(name=XL_FONT, bold=True, size=13, color=XL_DARK_GREEN)
-    for c in range(1, 5):
-        ws.cell(row=row, column=c).fill = net_fill
-        ws.cell(row=row, column=c).border = green_border
-    row += 2
-
-    ws.cell(row=row, column=1, value=f"Generated on: {date.today().isoformat()}").font = Font(name=XL_FONT, size=9, color="999999")
-    ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=4)
-
-    ws.column_dimensions["A"].width = 26
-    ws.column_dimensions["B"].width = 16
-    ws.column_dimensions["C"].width = 16
-    ws.column_dimensions["D"].width = 18
-    wb.save(filepath)
-    return str(filepath)
