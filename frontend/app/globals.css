@@ -1,10 +1,165 @@
 @import "tailwindcss";
 
 @theme inline {
-  --color-brand-blue: #1a73e8;
+  --color-brand-blue: #334155;
+  --color-brand-green: #059669;
+  --color-brand-red: #dc2626;
+  --color-brand-orange: #ea580c;
+}
+
+/* ── Industrial Slate Theme ── */
+:root {
+  --color-primary: #334155;
+  --color-primary-hover: #1e293b;
+  --color-on-primary: #ffffff;
+  --color-accent: #059669;
+  --color-accent-hover: #047857;
+  --color-on-accent: #ffffff;
+  --color-destructive: #dc2626;
+  --color-destructive-hover: #b91c1c;
+  --color-warning: #f59e0b;
+
+  --color-bg: #f8fafc;
+  --color-surface: #ffffff;
+  --color-surface-alt: #f1f5f9;
+  --color-foreground: #0f172a;
+  --color-muted: #64748b;
+  --color-muted-light: #94a3b8;
+  --color-border: #e2e8f0;
+  --color-border-strong: #cbd5e1;
+
+  --color-table-stripe: #f8fafc;
+  --color-table-hover: #f1f5f9;
+
+  --color-toast-success: #059669;
+  --color-toast-error: #dc2626;
+  --color-toast-info: #3b82f6;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 1px 3px rgba(0, 0, 0, 0.1);
+  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.08);
+
+  --radius: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+}
+
+/* ── Dark Mode (Control Room) ── */
+.dark {
+  --color-primary: #94a3b8;
+  --color-primary-hover: #cbd5e1;
+  --color-on-primary: #0f172a;
+  --color-accent: #34d399;
+  --color-accent-hover: #6ee7b7;
+  --color-on-accent: #0f172a;
+  --color-destructive: #f87171;
+  --color-destructive-hover: #fca5a5;
+  --color-warning: #fbbf24;
+
+  --color-bg: #0f172a;
+  --color-surface: #1e293b;
+  --color-surface-alt: #334155;
+  --color-foreground: #f1f5f9;
+  --color-muted: #94a3b8;
+  --color-muted-light: #64748b;
+  --color-border: #334155;
+  --color-border-strong: #475569;
+
+  --color-table-stripe: #1e293b;
+  --color-table-hover: #334155;
+
+  --color-toast-success: #34d399;
+  --color-toast-error: #f87171;
+  --color-toast-info: #60a5fa;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 1px 3px rgba(0, 0, 0, 0.4);
+  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+/* ── Base ── */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
 }
 
 body {
-  background-color: #f9fafb;
-  font-family: "Inter", sans-serif;
+  margin: 0;
+  background-color: var(--color-bg);
+  color: var(--color-foreground);
+  font-family: "Inter", system-ui, -apple-system, sans-serif;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ── Touch Targets ── */
+@media (pointer: coarse) {
+  button,
+  [role="button"],
+  a,
+  input,
+  select,
+  textarea {
+    min-height: 48px;
+  }
+}
+
+/* ── Smooth Scrolling ── */
+.swipeable-scroll {
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border-strong) transparent;
+}
+
+.swipeable-scroll::-webkit-scrollbar {
+  height: 4px;
+}
+
+.swipeable-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.swipeable-scroll::-webkit-scrollbar-thumb {
+  background: var(--color-border-strong);
+  border-radius: 2px;
+}
+
+/* ── Safe Areas ── */
+.safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+.safe-top {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+/* ── Reduced Motion ── */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ── Focus Visible ── */
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+  border-radius: var(--radius);
+}
+
+/* ── Selection ── */
+::selection {
+  background-color: var(--color-accent);
+  color: var(--color-on-accent);
 }

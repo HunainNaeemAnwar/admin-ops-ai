@@ -33,10 +33,14 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
       }
       return (
         <div className="flex flex-col items-center justify-center gap-4 p-8">
-          <p className="text-lg font-medium text-red-600">Something went wrong</p>
-          <p className="text-sm text-gray-500">{this.state.error?.message}</p>
+          <p className="text-lg font-medium" style={{ color: "var(--color-destructive)" }}>
+            Something went wrong
+          </p>
+          <p className="text-sm" style={{ color: "var(--color-muted)" }}>
+            {this.state.error?.message}
+          </p>
           <button
-            className="rounded-md bg-brand-blue px-4 py-2 text-sm text-white hover:bg-blue-700"
+            className="rounded-md bg-brand-green px-4 py-2 text-sm font-medium text-white hover:opacity-90 transition-opacity"
             onClick={() => this.setState({ hasError: false, error: null })}
           >
             Try again
@@ -57,10 +61,12 @@ export function FallbackError({
 }) {
   return (
     <div className="flex flex-col items-center justify-center gap-4 p-12">
-      <p className="text-lg font-medium text-red-600">{message}</p>
+      <p className="text-lg font-medium" style={{ color: "var(--color-destructive)" }}>
+        {message}
+      </p>
       {onRetry && (
         <button
-          className="rounded-md bg-brand-blue px-4 py-2 text-sm text-white hover:bg-blue-700"
+          className="rounded-md bg-brand-green px-4 py-2 text-sm font-medium text-white hover:opacity-90 transition-opacity"
           onClick={onRetry}
         >
           Retry

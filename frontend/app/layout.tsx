@@ -1,4 +1,4 @@
-import type { Metadata } from "next"
+import type { Metadata, Viewport } from "next"
 import { Inter } from "next/font/google"
 import "./globals.css"
 import { Providers } from "@/providers"
@@ -10,14 +10,20 @@ export const metadata: Metadata = {
   description: "Factory piece-rate worker tracking system",
 }
 
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 5,
+}
+
 export default function RootLayout({
   children,
 }: {
   children: React.ReactNode
 }) {
   return (
-    <html lang="en">
-      <body className={`${inter.className} bg-gray-50 text-gray-900 antialiased`}>
+    <html lang="en" className="light" suppressHydrationWarning>
+      <body className={`${inter.className} antialiased`} style={{ background: "var(--color-bg)", color: "var(--color-foreground)" }}>
         <Providers>{children}</Providers>
       </body>
     </html>

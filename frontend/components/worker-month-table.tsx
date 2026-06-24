@@ -40,9 +40,11 @@ export function WorkerMonthTable({ workerName, year, month, products, refreshKey
   if (loading) {
     return (
       <div className="space-y-2">
-        <Skeleton className="h-8 w-full" />
-        <Skeleton className="h-8 w-full" />
-        <Skeleton className="h-8 w-full" />
+        <Skeleton className="h-10 w-full" />
+        <Skeleton className="h-10 w-full" />
+        <Skeleton className="h-10 w-full" />
+        <Skeleton className="h-10 w-full" />
+        <Skeleton className="h-10 w-full" />
       </div>
     )
   }
@@ -50,9 +52,9 @@ export function WorkerMonthTable({ workerName, year, month, products, refreshKey
   if (error) {
     return (
       <div className="flex flex-col items-center gap-4 py-8">
-        <p className="text-red-600">{error}</p>
+        <p style={{ color: "var(--color-destructive)" }}>{error}</p>
         <button
-          className="rounded-md bg-brand-blue px-4 py-2 text-sm text-white hover:bg-blue-700"
+          className="rounded-md bg-brand-green px-4 py-2 text-sm font-medium text-white hover:opacity-90 transition-opacity"
           onClick={fetchData}
         >
           Retry
@@ -63,7 +65,7 @@ export function WorkerMonthTable({ workerName, year, month, products, refreshKey
 
   if (!data || data.days.length === 0) {
     return (
-      <p className="py-8 text-center text-gray-500">
+      <p className="py-8 text-center text-sm" style={{ color: "var(--color-muted)" }}>
         No data for this period
       </p>
     )
@@ -83,45 +85,84 @@ export function WorkerMonthTable({ workerName, year, month, products, refreshKey
   const hasAnyData = presentDays.length > 0
 
   return (
-    <div className="overflow-x-auto rounded-lg border border-gray-200">
-      <table className="min-w-full divide-y divide-gray-200 text-sm">
-        <thead className="bg-gray-50">
-          <tr>
-            <th className="whitespace-nowrap px-3 py-2 text-left font-medium text-gray-500">
+    <div className="swipeable-scroll overflow-x-auto rounded-lg border" style={{ borderColor: "var(--color-border)" }}>
+      <table className="min-w-full text-sm" style={{ borderCollapse: "collapse" }}>
+        <thead>
+          <tr style={{ borderBottom: "2px solid var(--color-border)", background: "var(--color-surface-alt)" }}>
+            <th
+              className="sticky left-0 z-10 whitespace-nowrap px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wider"
+              style={{ color: "var(--color-muted)", background: "var(--color-surface-alt)" }}
+            >
               Date
             </th>
             {productCodes.map((code) => (
               <th
                 key={code}
-                className="whitespace-nowrap px-3 py-2 text-right font-medium text-gray-500"
+                className="whitespace-nowrap px-3 py-2.5 text-right text-xs font-semibold uppercase tracking-wider"
+                style={{ color: "var(--color-muted)" }}
               >
                 {code}
               </th>
             ))}
           </tr>
         </thead>
-        <tbody className="divide-y divide-gray-200">
-          {data.days.map((day) => {
+        <tbody>
+          {data.days.map((day, i) => {
             const isFuture = day.date > todayStr
+            const isToday = day.date === todayStr
             return (
-              <tr key={day.date} className="hover:bg-gray-50">
-                <td className="whitespace-nowrap px-3 py-2 text-gray-700">
+              <tr
+                key={day.date}
+                style={{
+                  borderBottom: "1px solid var(--color-border)",
+                  background: isToday
+                    ? "var(--color-accent) / 0.1)"
+                    : i % 2 === 0 ? "var(--color-surface)" : "var(--color-table-stripe)",
+                }}
+                className="transition-colors hover:bg-surface-alt"
+              >
+                <td
+                  className="sticky left-0 z-10 whitespace-nowrap px-3 py-2.5 text-xs font-medium"
+                  style={{
+                    color: "var(--color-foreground)",
+                    background: isToday
+                      ? "rgba(5, 150, 105, 0.05)"
+                      : i % 2 === 0 ? "var(--color-surface)" : "var(--color-table-stripe)",
+                  }}
+                >
                   {day.date}
                 </td>
                 {productCodes.map((code) => {
                   if (isFuture) {
+                    return <td key={code} className="whitespace-nowrap px-3 py-2.5" />
+                  }
+                  if (day.status === "absent") {
                     return (
-                      <td key={code} className="whitespace-nowrap px-3 py-2" />
+                      <td
+                        key={code}
+                        className="whitespace-nowrap px-3 py-2.5 text-right"
+                      >
+                        <span
+                          className="inline-block rounded px-1.5 py-0.5 text-xs font-medium"
+                          style={{
+                            background: "var(--color-destructive) / 0.1)",
+                            color: "var(--color-destructive)",
+                          }}
+                        >
+                          ABSENT
+                        </span>
+                      </td>
                     )
                   }
                   return (
                     <td
                       key={code}
-                      className="whitespace-nowrap px-3 py-2 text-right text-gray-700"
+                      className="whitespace-nowrap px-3 py-2.5 text-right font-mono text-sm"
+                      style={{ color: "var(--color-foreground)" }}
                     >
-                      {day.status === "absent"
-                        ? (day.reason || "ABSENT")
-                        : (day.products[code] ?? "-")}
+                      {day.products[code] ?? (
+                        <span style={{ color: "var(--color-muted-light)" }}>-</span>
+                      )}
                     </td>
                   )
                 })}
@@ -130,17 +171,21 @@ export function WorkerMonthTable({ workerName, year, month, products, refreshKey
           })}
         </tbody>
         {hasAnyData && (
-          <tfoot className="border-t-2 border-gray-300 bg-gray-50">
-            <tr>
-              <td className="whitespace-nowrap px-3 py-2 text-left font-semibold text-gray-900">
+          <tfoot>
+            <tr style={{ borderTop: "2px solid var(--color-border)", background: "var(--color-surface-alt)" }}>
+              <td
+                className="sticky left-0 z-10 whitespace-nowrap px-3 py-2.5 text-left text-xs font-bold uppercase tracking-wider"
+                style={{ color: "var(--color-foreground)", background: "var(--color-surface-alt)" }}
+              >
                 Total
               </td>
               {productCodes.map((code) => (
                 <td
                   key={code}
-                  className="whitespace-nowrap px-3 py-2 text-right font-semibold text-gray-900"
+                  className="whitespace-nowrap px-3 py-2.5 text-right font-mono text-sm font-bold"
+                  style={{ color: "var(--color-accent)" }}
                 >
-                  {productTotals[code]}
+                  {productTotals[code].toLocaleString()}
                 </td>
               ))}
             </tr>

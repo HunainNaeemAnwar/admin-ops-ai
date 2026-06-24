@@ -5,6 +5,7 @@ import { fetchApi } from "@/lib/api"
 import type { Worker, Product } from "@/lib/types"
 import { WorkerMonthTable } from "@/components/worker-month-table"
 import { Select } from "@/components/ui/select"
+import { ThemeToggle } from "@/components/theme-toggle"
 
 const MONTHS = [
   "January", "February", "March", "April", "May", "June",
@@ -57,11 +58,11 @@ export default function HomePage() {
 
   if (error && workers.length === 0) {
     return (
-      <div className="flex min-h-screen items-center justify-center">
+      <div className="flex min-h-dvh items-center justify-center px-4" style={{ background: "var(--color-bg)" }}>
         <div className="flex flex-col items-center gap-4">
-          <p className="text-lg font-medium text-red-600">{error}</p>
+          <p className="text-lg font-medium" style={{ color: "var(--color-destructive)" }}>{error}</p>
           <button
-            className="rounded-md bg-brand-blue px-4 py-2 text-sm text-white hover:bg-blue-700"
+            className="rounded-md bg-brand-green px-4 py-2 text-sm font-medium text-white hover:opacity-90 transition-opacity"
             onClick={handleRetry}
           >
             Retry
@@ -72,54 +73,69 @@ export default function HomePage() {
   }
 
   return (
-    <main className="mx-auto max-w-6xl px-4 py-8">
-      <div className="mb-6 flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-gray-900">
-          Factory Production Dashboard
-        </h1>
-        <a
-          href="/login"
-          className="rounded-md bg-brand-blue px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 transition-colors"
-        >
-          Admin Login
-        </a>
-      </div>
+    <main className="min-h-dvh px-4 py-6" style={{ background: "var(--color-bg)" }}>
+      <div className="mx-auto max-w-6xl">
+        <div className="mb-6 flex items-center justify-between">
+          <h1 className="text-xl font-bold sm:text-2xl" style={{ color: "var(--color-foreground)" }}>
+            Factory Production
+          </h1>
+          <div className="flex items-center gap-2">
+            <ThemeToggle />
+            <a
+              href="/login"
+              className="rounded-md bg-brand-green px-4 py-2 text-sm font-medium text-white hover:opacity-90 transition-opacity"
+            >
+              Admin Login
+            </a>
+          </div>
+        </div>
 
-      <div className="mb-6 flex flex-wrap gap-4">
-        <Select
-          label="Worker"
-          options={workers.map((w) => ({ value: w.name, label: w.name }))}
-          value={selectedWorker}
-          onChange={(e) => setSelectedWorker(e.target.value)}
-        />
-        <Select
-          label="Month"
-          options={MONTHS.map((m, i) => ({ value: String(i + 1), label: m }))}
-          value={String(month)}
-          onChange={(e) => setMonth(Number(e.target.value))}
-        />
-        <Select
-          label="Year"
-          options={[currentYear - 1, currentYear, currentYear + 1].map((y) => ({
-            value: String(y),
-            label: String(y),
-          }))}
-          value={String(year)}
-          onChange={(e) => setYear(Number(e.target.value))}
-        />
-      </div>
+        <div className="mb-6 flex flex-wrap gap-3">
+          <Select
+            label="Worker"
+            options={workers.map((w) => ({ value: w.name, label: w.name }))}
+            value={selectedWorker}
+            onChange={(e) => setSelectedWorker(e.target.value)}
+          />
+          <Select
+            label="Month"
+            options={MONTHS.map((m, i) => ({ value: String(i + 1), label: m }))}
+            value={String(month)}
+            onChange={(e) => setMonth(Number(e.target.value))}
+          />
+          <div className="flex flex-col gap-1">
+            <label className="text-xs font-medium" style={{ color: "var(--color-muted)" }}>Year</label>
+            <select
+              value={year}
+              onChange={(e) => setYear(Number(e.target.value))}
+              className="rounded-md border px-3 py-2 text-sm"
+              style={{
+                borderColor: "var(--color-border)",
+                background: "var(--color-surface)",
+                color: "var(--color-foreground)",
+              }}
+            >
+              {[currentYear - 1, currentYear, currentYear + 1].map((y) => (
+                <option key={y} value={y}>{y}</option>
+              ))}
+            </select>
+          </div>
+        </div>
 
-      {selectedWorker ? (
-        <WorkerMonthTable
-          workerName={selectedWorker}
-          year={year}
-          month={month}
-          products={products}
-          refreshKey={refreshKey}
-        />
-      ) : (
-        <p className="py-8 text-center text-gray-500">Loading workers...</p>
-      )}
+        {selectedWorker ? (
+          <WorkerMonthTable
+            workerName={selectedWorker}
+            year={year}
+            month={month}
+            products={products}
+            refreshKey={refreshKey}
+          />
+        ) : (
+          <p className="py-8 text-center text-sm" style={{ color: "var(--color-muted)" }}>
+            Loading workers...
+          </p>
+        )}
+      </div>
     </main>
   )
 }

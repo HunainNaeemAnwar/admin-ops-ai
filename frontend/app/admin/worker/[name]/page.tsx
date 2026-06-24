@@ -6,6 +6,10 @@ import { Select } from "@/components/ui/select"
 import { fetchApi } from "@/lib/api"
 import type { Product } from "@/lib/types"
 import { useEffect, useCallback } from "react"
+import { Breadcrumbs } from "@/components/ui/breadcrumbs"
+import { Avatar } from "@/components/ui/avatar"
+import { Download, ChevronLeft, ChevronRight, ArrowLeft } from "lucide-react"
+import Link from "next/link"
 
 const MONTHS = [
   "January", "February", "March", "April", "May", "June",
@@ -22,11 +26,12 @@ export default function WorkerDetailPage({
   params: Promise<{ name: string }>
 }) {
   const { name } = use(params)
+  const workerName = decodeURIComponent(name)
   const [year, setYear] = useState(currentYear)
   const [month, setMonth] = useState(currentMonth)
   const [products, setProducts] = useState<Product[]>([])
 
-  const fetchData = useCallback(async () => {
+  const fetchProducts = useCallback(async () => {
     try {
       const data = await fetchApi<{ products: Product[] }>("/api/products")
       setProducts(data.products)
@@ -36,16 +41,46 @@ export default function WorkerDetailPage({
   }, [])
 
   useEffect(() => {
-    fetchData()
-  }, [fetchData])
+    fetchProducts()
+  }, [fetchProducts])
+
+  const prevMonth = () => {
+    if (month === 1) { setMonth(12); setYear(y => y - 1) }
+    else setMonth(m => m - 1)
+  }
+
+  const nextMonth = () => {
+    if (month === 12) { setMonth(1); setYear(y => y + 1) }
+    else setMonth(m => m + 1)
+  }
 
   return (
-    <div>
-      <h1 className="mb-6 text-2xl font-bold text-gray-900">
-        {decodeURIComponent(name)}
-      </h1>
+    <div className="space-y-4">
+      <Breadcrumbs />
 
-      <div className="mb-6 flex flex-wrap items-end gap-4">
+      <div className="flex items-center gap-3">
+        <Link
+          href="/admin/workers"
+          className="rounded-md p-2 transition-colors hover:bg-surface-alt"
+          style={{ color: "var(--color-muted)" }}
+        >
+          <ArrowLeft size={20} />
+        </Link>
+        <Avatar name={workerName} size="lg" />
+        <h1 className="text-xl font-bold sm:text-2xl" style={{ color: "var(--color-foreground)" }}>
+          {workerName}
+        </h1>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-3">
+        <button
+          onClick={prevMonth}
+          className="rounded-md border p-2 transition-colors hover:bg-surface-alt"
+          style={{ borderColor: "var(--color-border)", color: "var(--color-muted)" }}
+          aria-label="Previous month"
+        >
+          <ChevronLeft size={18} />
+        </button>
         <Select
           label="Month"
           options={MONTHS.map((m, i) => ({ value: String(i + 1), label: m }))}
@@ -53,24 +88,40 @@ export default function WorkerDetailPage({
           onChange={(e) => setMonth(Number(e.target.value))}
         />
         <div className="flex flex-col gap-1">
-          <label className="text-sm font-medium text-gray-700">Year</label>
+          <label className="text-xs font-medium" style={{ color: "var(--color-muted)" }}>Year</label>
           <input
             type="number"
             value={year}
             onChange={(e) => setYear(Number(e.target.value))}
-            className="rounded-md border border-gray-300 px-3 py-2 text-sm"
+            className="rounded-md border px-3 py-2 text-sm"
+            style={{
+              borderColor: "var(--color-border)",
+              background: "var(--color-surface)",
+              color: "var(--color-foreground)",
+            }}
           />
         </div>
-        <a
-          href={`${process.env.NEXT_PUBLIC_BACKEND_URL || ""}/api/worker/${encodeURIComponent(decodeURIComponent(name))}/excel/${year}/${month}`}
-          className="inline-flex items-center rounded-md bg-green-600 px-4 py-2 text-sm text-white hover:bg-green-700 transition-colors"
+        <button
+          onClick={nextMonth}
+          className="rounded-md border p-2 transition-colors hover:bg-surface-alt"
+          style={{ borderColor: "var(--color-border)", color: "var(--color-muted)" }}
+          aria-label="Next month"
         >
-          Download Excel
+          <ChevronRight size={18} />
+        </button>
+        <a
+          href={`${process.env.NEXT_PUBLIC_BACKEND_URL || ""}/api/worker/${encodeURIComponent(workerName)}/excel/${year}/${month}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-2 rounded-md bg-brand-green px-4 py-2 text-sm font-medium text-white hover:opacity-90 transition-opacity"
+        >
+          <Download size={16} />
+          Excel
         </a>
       </div>
 
       <WorkerMonthTable
-        workerName={decodeURIComponent(name)}
+        workerName={workerName}
         year={year}
         month={month}
         products={products}

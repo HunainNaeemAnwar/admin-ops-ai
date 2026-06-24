@@ -8,11 +8,18 @@ export default function RootError({
   reset: () => void
 }) {
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center gap-4">
-      <h1 className="text-xl font-semibold text-red-600">Backend unavailable</h1>
-      <p className="text-sm text-gray-500">{error.message}</p>
+    <div
+      className="flex min-h-dvh flex-col items-center justify-center gap-4 px-4"
+      style={{ background: "var(--color-bg)" }}
+    >
+      <h1 className="text-xl font-semibold" style={{ color: "var(--color-destructive)" }}>
+        Backend unavailable
+      </h1>
+      <p className="text-sm" style={{ color: "var(--color-muted)" }}>
+        {error.message}
+      </p>
       <button
-        className="rounded-md bg-brand-blue px-4 py-2 text-sm text-white hover:bg-blue-700"
+        className="rounded-md bg-brand-green px-4 py-2 text-sm font-medium text-white hover:opacity-90 transition-opacity"
         onClick={reset}
       >
         Try again

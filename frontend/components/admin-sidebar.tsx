@@ -15,6 +15,7 @@ import {
 } from "lucide-react"
 import { useState } from "react"
 import { fetchApi } from "@/lib/api"
+import { ThemeToggle } from "@/components/theme-toggle"
 
 const navItems = [
   { href: "/admin", label: "Overview", icon: LayoutDashboard },
@@ -41,16 +42,23 @@ export function AdminSidebar() {
 
   return (
     <aside
-      className={`flex flex-col border-r border-gray-200 bg-white transition-all duration-200 ${
+      className={`hidden flex-col border-r transition-all duration-200 md:flex ${
         collapsed ? "w-16" : "w-56"
       }`}
+      style={{
+        borderColor: "var(--color-border)",
+        background: "var(--color-surface)",
+      }}
     >
-      <div className="flex items-center justify-between border-b border-gray-200 px-4 py-4">
+      <div className="flex items-center justify-between border-b px-4 py-4" style={{ borderColor: "var(--color-border)" }}>
         {!collapsed && (
-          <span className="text-sm font-semibold text-gray-900">Admin</span>
+          <span className="text-sm font-semibold" style={{ color: "var(--color-foreground)" }}>
+            Admin
+          </span>
         )}
         <button
-          className="rounded-md p-1 text-gray-500 hover:bg-gray-100"
+          className="rounded-md p-1 transition-colors hover:bg-surface-alt"
+          style={{ color: "var(--color-muted)" }}
           onClick={() => setCollapsed(!collapsed)}
         >
           {collapsed ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}
@@ -60,16 +68,17 @@ export function AdminSidebar() {
       <nav className="flex-1 space-y-1 px-2 py-4">
         {navItems.map((item) => {
           const Icon = item.icon
-          const isActive = pathname === item.href
+          const isActive = pathname === item.href || (item.href === "/admin" && pathname === "/admin/")
           return (
             <Link
               key={item.href}
               href={item.href}
               className={`flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors ${
                 isActive
-                  ? "bg-brand-blue text-white"
-                  : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
+                  ? "bg-brand-green text-white"
+                  : "hover:bg-surface-alt"
               }`}
+              style={!isActive ? { color: "var(--color-muted)" } : undefined}
             >
               <Icon size={18} />
               {!collapsed && <span>{item.label}</span>}
@@ -78,10 +87,12 @@ export function AdminSidebar() {
         })}
       </nav>
 
-      <div className="border-t border-gray-200 px-2 py-4">
+      <div className="space-y-1 border-t px-2 py-3" style={{ borderColor: "var(--color-border)" }}>
+        <ThemeToggle />
         <button
           onClick={handleLogout}
-          className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-100 hover:text-gray-900 transition-colors"
+          className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors hover:bg-surface-alt"
+          style={{ color: "var(--color-muted)" }}
         >
           <LogOut size={18} />
           {!collapsed && <span>Logout</span>}

@@ -24,8 +24,13 @@ export default function OAuthCallbackPage() {
   }, [router])
 
   return (
-    <div className="flex min-h-screen items-center justify-center">
-      <p className="text-gray-500">{status}</p>
+    <div
+      className="flex min-h-dvh items-center justify-center px-4"
+      style={{ background: "var(--color-bg)" }}
+    >
+      <p className="animate-pulse text-sm" style={{ color: "var(--color-muted)" }}>
+        {status}
+      </p>
     </div>
   )
 }

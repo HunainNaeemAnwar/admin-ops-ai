@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation"
 import { useAuth } from "@/lib/auth"
 import { AdminSidebar } from "@/components/admin-sidebar"
 import { ChatWidgetLoader } from "@/components/chat-widget-loader"
+import { BottomNav } from "@/components/bottom-nav"
 
 export default function AdminLayout({
   children,
@@ -25,8 +26,8 @@ export default function AdminLayout({
 
   if (loading) {
     return (
-      <div className="flex min-h-screen items-center justify-center">
-        <p className="text-gray-500">Loading...</p>
+      <div className="flex min-h-screen items-center justify-center" style={{ background: "var(--color-bg)" }}>
+        <p style={{ color: "var(--color-muted)" }}>Loading...</p>
       </div>
     )
   }
@@ -36,11 +37,17 @@ export default function AdminLayout({
   }
 
   return (
-    <div className="flex min-h-screen">
+    <div className="flex min-h-dvh">
       <AdminSidebar />
-      <main className="flex-1 overflow-auto bg-gray-50 p-6">
-        {children}
+      <main
+        className="flex-1 overflow-auto pb-20 md:pb-6"
+        style={{ background: "var(--color-bg)" }}
+      >
+        <div className="p-4 sm:p-6">
+          {children}
+        </div>
       </main>
+      <BottomNav />
       <ChatWidgetLoader />
     </div>
   )

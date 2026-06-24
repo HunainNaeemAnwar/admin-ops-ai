@@ -5,7 +5,8 @@ interface SkeletonProps {
 export function Skeleton({ className = "" }: SkeletonProps) {
   return (
     <div
-      className={`animate-pulse rounded-md bg-gray-200 ${className}`}
+      className={`animate-pulse rounded-md ${className}`}
+      style={{ background: "var(--color-surface-alt)" }}
     />
   )
 }

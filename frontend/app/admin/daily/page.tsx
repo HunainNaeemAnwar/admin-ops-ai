@@ -5,16 +5,16 @@ import { fetchApi } from "@/lib/api"
 import type { DailyReport } from "@/lib/types"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Card } from "@/components/ui/card"
-
-const now = new Date()
-const y = now.getFullYear()
-const m = now.getMonth() + 1
-const d = now.getDate()
+import { Badge } from "@/components/ui/badge"
+import { Breadcrumbs } from "@/components/ui/breadcrumbs"
+import { Avatar } from "@/components/ui/avatar"
+import { Calendar } from "lucide-react"
 
 export default function DailyReportPage() {
-  const [year, setYear] = useState(y)
-  const [month, setMonth] = useState(m)
-  const [day, setDay] = useState(d)
+  const [dateStr, setDateStr] = useState(() => {
+    const now = new Date()
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`
+  })
   const [data, setData] = useState<DailyReport | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -23,8 +23,9 @@ export default function DailyReportPage() {
     setLoading(true)
     setError(null)
     try {
+      const [y, m, d] = dateStr.split("-").map(Number)
       const result = await fetchApi<DailyReport>(
-        `/admin/daily?year=${year}&month=${month}&day=${day}`
+        `/admin/daily?year=${y}&month=${m}&day=${d}`
       )
       setData(result)
     } catch {
@@ -32,13 +33,18 @@ export default function DailyReportPage() {
     } finally {
       setLoading(false)
     }
-  }, [year, month, day])
+  }, [dateStr])
 
   useEffect(() => {
     fetchData()
   }, [fetchData])
 
-  const daysInMonth = new Date(year, month, 0).getDate()
+  const goToToday = () => {
+    const now = new Date()
+    setDateStr(
+      `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`
+    )
+  }
 
   if (loading) {
     return (
@@ -52,9 +58,9 @@ export default function DailyReportPage() {
   if (error) {
     return (
       <div className="flex flex-col items-center gap-4 py-12">
-        <p className="text-red-600">{error}</p>
+        <p style={{ color: "var(--color-destructive)" }}>{error}</p>
         <button
-          className="rounded-md bg-brand-blue px-4 py-2 text-sm text-white hover:bg-blue-700"
+          className="rounded-md bg-brand-green px-4 py-2 text-sm font-medium text-white hover:opacity-90 transition-opacity"
           onClick={fetchData}
         >
           Retry
@@ -70,88 +76,117 @@ export default function DailyReportPage() {
     const entry = data?.entries.find(
       (e) => e.worker_name === worker && e.product_code === product
     )
-    return entry?.quantity ?? "-"
+    return entry?.quantity ?? null
   }
 
   return (
-    <div>
-      <h1 className="mb-6 text-2xl font-bold text-gray-900">Daily Report</h1>
+    <div className="space-y-4">
+      <Breadcrumbs />
 
-      <div className="mb-6 flex flex-wrap gap-4">
+      <div className="flex items-center justify-between">
+        <h1 className="text-xl font-bold sm:text-2xl" style={{ color: "var(--color-foreground)" }}>
+          Daily Report
+        </h1>
+      </div>
+
+      <div className="flex flex-wrap items-end gap-3">
         <div className="flex flex-col gap-1">
-          <label className="text-sm font-medium text-gray-700">Year</label>
+          <label className="text-xs font-medium" style={{ color: "var(--color-muted)" }}>
+            Date
+          </label>
           <input
-            type="number"
-            value={year}
-            onChange={(e) => setYear(Number(e.target.value))}
-            className="rounded-md border border-gray-300 px-3 py-2 text-sm"
+            type="date"
+            value={dateStr}
+            onChange={(e) => setDateStr(e.target.value)}
+            className="rounded-md border px-3 py-2 text-sm"
+            style={{
+              borderColor: "var(--color-border)",
+              background: "var(--color-surface)",
+              color: "var(--color-foreground)",
+            }}
           />
         </div>
-        <div className="flex flex-col gap-1">
-          <label className="text-sm font-medium text-gray-700">Month</label>
-          <input
-            type="number"
-            min={1}
-            max={12}
-            value={month}
-            onChange={(e) => setMonth(Number(e.target.value))}
-            className="rounded-md border border-gray-300 px-3 py-2 text-sm"
-          />
-        </div>
-        <div className="flex flex-col gap-1">
-          <label className="text-sm font-medium text-gray-700">Day</label>
-          <input
-            type="number"
-            min={1}
-            max={daysInMonth}
-            value={day}
-            onChange={(e) => setDay(Number(e.target.value))}
-            className="rounded-md border border-gray-300 px-3 py-2 text-sm"
-          />
-        </div>
+        <button
+          onClick={goToToday}
+          className="inline-flex items-center gap-2 rounded-md border px-3 py-2 text-sm font-medium transition-colors hover:bg-surface-alt"
+          style={{ borderColor: "var(--color-border)", color: "var(--color-muted)" }}
+        >
+          <Calendar size={14} />
+          Today
+        </button>
       </div>
 
       {!data || data.entries.length === 0 ? (
-        <p className="text-gray-500">No data for this date.</p>
+        <div className="py-8 text-center text-sm" style={{ color: "var(--color-muted)" }}>
+          No data for this date.
+        </div>
       ) : (
-        <Card>
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200 text-sm">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="whitespace-nowrap px-4 py-2 text-left font-medium text-gray-500">
-                    Worker
-                  </th>
-                  {products.map((p) => (
+        <>
+          <div className="flex items-center gap-2">
+            <Badge variant="info">Workers: {workers.length}</Badge>
+            <Badge>{data.total_pieces.toLocaleString()} pieces</Badge>
+          </div>
+
+          <Card>
+            <div className="swipeable-scroll overflow-x-auto">
+              <table className="min-w-full text-sm" style={{ borderCollapse: "collapse" }}>
+                <thead>
+                  <tr style={{ borderBottom: "2px solid var(--color-border)" }}>
                     <th
-                      key={p}
-                      className="whitespace-nowrap px-4 py-2 text-right font-medium text-gray-500"
+                      className="sticky left-0 z-10 px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wider"
+                      style={{ color: "var(--color-muted)", background: "var(--color-surface)" }}
                     >
-                      {p}
+                      Worker
                     </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-200">
-                {workers.map((worker) => (
-                  <tr key={worker} className="hover:bg-gray-50">
-                    <td className="whitespace-nowrap px-4 py-2 font-medium text-gray-700">
-                      {worker}
-                    </td>
                     {products.map((p) => (
-                      <td
+                      <th
                         key={p}
-                        className="whitespace-nowrap px-4 py-2 text-right text-gray-700"
+                        className="whitespace-nowrap px-3 py-2.5 text-right text-xs font-semibold uppercase tracking-wider"
+                        style={{ color: "var(--color-muted)" }}
                       >
-                        {getQty(worker, p)}
-                      </td>
+                        {p}
+                      </th>
                     ))}
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </Card>
+                </thead>
+                <tbody>
+                  {workers.map((worker, i) => (
+                    <tr
+                      key={worker}
+                      style={{
+                        borderBottom: "1px solid var(--color-border)",
+                        background: i % 2 === 0 ? "var(--color-surface)" : "var(--color-table-stripe)",
+                      }}
+                      className="transition-colors hover:bg-surface-alt"
+                    >
+                      <td
+                        className="sticky left-0 z-10 flex items-center gap-2 whitespace-nowrap px-3 py-2.5 font-medium"
+                        style={{ background: i % 2 === 0 ? "var(--color-surface)" : "var(--color-table-stripe)" }}
+                      >
+                        <Avatar name={worker} size="sm" />
+                        <span style={{ color: "var(--color-foreground)" }}>{worker}</span>
+                      </td>
+                      {products.map((p) => {
+                        const qty = getQty(worker, p)
+                        return (
+                          <td
+                            key={p}
+                            className="whitespace-nowrap px-3 py-2.5 text-right font-mono"
+                            style={{ color: "var(--color-foreground)" }}
+                          >
+                            {qty !== null ? qty.toLocaleString() : (
+                              <span style={{ color: "var(--color-muted-light)" }}>-</span>
+                            )}
+                          </td>
+                        )
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+        </>
       )}
     </div>
   )
