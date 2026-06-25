@@ -72,8 +72,8 @@ export function ChatWidget() {
       {/* FAB */}
       {!isOpen && (
         <button onClick={() => setIsOpen(true)} aria-label="Open chat"
-          className="fixed z-50 flex items-center justify-center rounded-full shadow-lg transition-transform active:scale-95 md:bottom-6 md:right-6"
-          style={{ background: primary, color: onPrimary, width: 48, height: 48, bottom: "calc(72px + env(safe-area-inset-bottom, 0px))", right: 16 }}
+          className="fixed z-50 flex items-center justify-center rounded-full shadow-lg transition-transform active:scale-95 md:bottom-3 md:right-6"
+          style={{ background: primary, color: onPrimary, width: 48, height: 48, bottom: "calc(80px + env(safe-area-inset-bottom, 0px))", right: 16 }}
         >
           <MessageCircle size={22} />
         </button>
@@ -81,7 +81,7 @@ export function ChatWidget() {
 
       {/* Mobile: full screen panel */}
       {isOpen && (
-        <div className="fixed inset-0 z-50 flex flex-col md:hidden" style={{ background: bg }}>
+        <div className="fixed z-50 flex flex-col md:hidden" style={{ background: bg, top: "15vh", left: 0, right: 0, bottom: 0 }}>
           {/* Header */}
           <div className="flex items-center justify-between px-4 py-3 shrink-0 safe-top" style={{ borderBottom: `1px solid ${border}` }}>
             <span className="text-sm font-semibold" style={{ color: fg }}>Factory Assistant</span>
