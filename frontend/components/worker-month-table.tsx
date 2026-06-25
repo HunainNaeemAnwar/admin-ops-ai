@@ -86,7 +86,7 @@ export function WorkerMonthTable({ workerName, year, month, products, refreshKey
   const hasAnyData = presentDays.length > 0
 
   return (
-    <div className="rounded-lg border" style={{ borderColor: "var(--color-border)" }}>
+    <div className="rounded-lg border overflow-hidden" style={{ borderColor: "var(--color-border)" }}>
       <div className="swipeable-scroll overflow-x-auto">
         <table className="w-full text-xs sm:text-sm" style={{ borderCollapse: "collapse" }}>
           <thead>
