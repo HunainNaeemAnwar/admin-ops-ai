@@ -38,18 +38,19 @@ MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY", "")
 MISTRAL_MODEL = os.getenv("MISTRAL_MODEL", "mistral-small-latest")
 MISTRAL_BASE_URL = os.getenv("MISTRAL_BASE_URL", "https://api.mistral.ai/v1")
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "mistral")
-MODEL_FALLBACK_CHAIN_ENV = os.getenv("MODEL_FALLBACK_CHAIN", "")
-MODEL_FALLBACK_CHAIN = [
-    m.strip() for m in MODEL_FALLBACK_CHAIN_ENV.split(",") if m.strip()
+FALLBACK_MODELS_ENV = os.getenv("FALLBACK_MODELS", "")
+FALLBACK_MODELS = [
+    m.strip() for m in FALLBACK_MODELS_ENV.split(",") if m.strip()
 ]
-if not MODEL_FALLBACK_CHAIN:
-    MODEL_FALLBACK_CHAIN = [
-        "gpt-oss-120b",  # Primary
-        "gpt-oss-120b",  # Fallback 1
-        "gpt-oss-120b",  # Fallback 2
+if not FALLBACK_MODELS:
+    all_providers = [LLM_PROVIDER, "gemini", "cerebras", "mistral", "openai"]
+    seen = set()
+    FALLBACK_MODELS = [
+        p for p in all_providers
+        if p not in seen and not seen.add(p)
     ]
 
-FALLBACK_MODELS = MODEL_FALLBACK_CHAIN
+ROUTER_MODEL = os.getenv("ROUTER_MODEL", "") or None  # Override: different model for Router vs Specialists
 
 
 

@@ -2,15 +2,15 @@
 
 Provides a validated, deterministic interface between agents (Layer 1-2)
 and data adapters (Layer 4). Handles input validation, error coordination,
-and consistent response formatting.
+thread-safe overwrite tracking, and consistent response formatting.
 
 Usage: orchestrator.py imports from here instead of individual tool modules.
 """
 
+import asyncio
 import json
 import sqlite3
-import time
-from datetime import date
+from datetime import date, datetime, timedelta
 from typing import Optional
 
 from tools.database import (
@@ -34,16 +34,68 @@ from tools.production_tools import (
 
 
 VALID_PRODUCTS = {"NUT", "10*20", "6*25", "6*30", "10*25"}
-_pending_overwrites: dict[tuple[str, str, str], bool] = {}
-_pending_overwrites_ts: float = time.time()
 
 
-def _clean_stale_overwrites():
-    global _pending_overwrites_ts
-    now = time.time()
-    if now - _pending_overwrites_ts > 300:
-        _pending_overwrites.clear()
-        _pending_overwrites_ts = now
+# ── Thread-safe overwrite tracker ─────────────────────
+
+class OverwriteTracker:
+    """Async-safe overwrite confirmation tracker.
+
+    Workers confirm overwrites by sending the same command twice.
+    This tracker stores pending confirmations with TTL expiry.
+    """
+
+    def __init__(self, ttl_seconds: int = 300):
+        self._lock = asyncio.Lock()
+        self._data: dict[tuple[str, str, str], bool] = {}
+        self._ts: dict[tuple[str, str, str], datetime] = {}
+        self._ttl = timedelta(seconds=ttl_seconds)
+
+    async def check(self, key: tuple[str, str, str]) -> bool:
+        async with self._lock:
+            self._evict()
+            if key in self._data and self._data[key]:
+                del self._data[key]
+                del self._ts[key]
+                return True
+            self._data[key] = True
+            self._ts[key] = datetime.now()
+            return False
+
+    def _evict(self):
+        cutoff = datetime.now() - self._ttl
+        stale = [k for k, t in self._ts.items() if t < cutoff]
+        for k in stale:
+            del self._data[k]
+            del self._ts[k]
+
+
+_pending_overwrites = OverwriteTracker()
+
+
+# ── Error types ───────────────────────────────────────
+
+class BusError(Exception):
+    """Base error for all bus operations."""
+    def __init__(self, message: str, code: str = "BUS_ERROR"):
+        self.code = code
+        self.message = message
+        super().__init__(f"[{code}] {message}")
+
+
+class ValidationError(BusError):
+    def __init__(self, message: str):
+        super().__init__(message, code="VALIDATION_ERROR")
+
+
+class DuplicateEntryError(BusError):
+    def __init__(self, message: str):
+        super().__init__(message, code="DUPLICATE_ENTRY")
+
+
+class NotFoundError(BusError):
+    def __init__(self, message: str):
+        super().__init__(message, code="NOT_FOUND")
 
 
 # ── Production ───────────────────────────────────────
@@ -66,8 +118,7 @@ class ProductionInput:
         return {"worker": self.worker, "product_code": self.product_code, "quantity": self.quantity, "date": self.entry_date}
 
 
-def record_production(worker: str, product_code: str, quantity: int, entry_date: str = "") -> str:
-    _clean_stale_overwrites()
+async def record_production(worker: str, product_code: str, quantity: int, entry_date: str = "") -> str:
     inp = ProductionInput(worker, product_code, quantity, entry_date)
     result = calc_piece_rate(inp.product_code, inp.quantity)
     if "error" in result:
@@ -86,11 +137,10 @@ def record_production(worker: str, product_code: str, quantity: int, entry_date:
         ).fetchone()
         if row:
             key = (inp.worker, inp.product_code, inp.entry_date)
-            if key in _pending_overwrites and _pending_overwrites[key]:
-                del _pending_overwrites[key]
+            confirmed = await _pending_overwrites.check(key)
+            if confirmed:
                 db_update_entry(row["id"], inp.quantity)
                 return f"  {inp.worker}: {inp.quantity}x{inp.product_code} (overwritten, was {row['quantity']})"
-            _pending_overwrites[key] = True
             return (
                 f"  ⚠️ {inp.worker} already has {row['quantity']}x{inp.product_code} for {inp.entry_date}.\n"
                 f"     Send same command again to overwrite."
@@ -98,7 +148,7 @@ def record_production(worker: str, product_code: str, quantity: int, entry_date:
         return f"  {inp.worker}: Already exists"
 
 
-def record_production_batch(entries: list[dict]) -> str:
+async def record_production_batch(entries: list[dict]) -> str:
     results = []
     for entry in entries:
         if not isinstance(entry, dict):
@@ -111,7 +161,8 @@ def record_production_batch(entries: list[dict]) -> str:
         if not worker or not product_code or quantity <= 0:
             results.append(f"  Invalid: {entry}")
             continue
-        results.append(record_production(worker, product_code, quantity, entry_date))
+        result = await record_production(worker, product_code, quantity, entry_date)
+        results.append(result)
     return "\n".join(results) if results else "No valid entries"
 
 

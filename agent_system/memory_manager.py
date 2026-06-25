@@ -1,3 +1,4 @@
+from datetime import datetime, timedelta
 from pathlib import Path
 from agents import SQLiteSession
 
@@ -6,7 +7,8 @@ MEMORY_DB = str(MEMORY_DIR / "agent_memory.db")
 
 
 class ConversationMemory:
-    MAX_TOKENS_ESTIMATE = 4000
+    MAX_TOKENS_ESTIMATE = 6000
+    AUTO_COMPACT_KEEP = 8
 
     def __init__(self, session_id: str):
         self.session_id = session_id
@@ -18,7 +20,7 @@ class ConversationMemory:
         return self._session
 
     async def _estimate_tokens(self, items) -> int:
-        return sum(len(str(item)) for item in items) // 4
+        return sum(len(str(item)) for item in items) // 3
 
     async def turn_count(self) -> int:
         items = await self._session.get_items()
@@ -52,7 +54,8 @@ class ConversationMemory:
         if estimated < self.MAX_TOKENS_ESTIMATE:
             return f"Memory OK (~{estimated} tokens)"
         before = len(items)
-        compacted = items[:1] + items[-6:]
+        keep_count = min(self.AUTO_COMPACT_KEEP, len(items) - 1)
+        compacted = items[:1] + items[-keep_count:]
         clean = await self._clean_dangling(compacted)
         await self._session.clear_session()
         await self._session.add_items(clean)

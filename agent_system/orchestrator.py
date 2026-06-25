@@ -7,10 +7,11 @@ from typing import Optional
 import agent_system.provider
 
 from openai import RateLimitError, APIStatusError
-from agents import Agent, Runner, function_tool, ModelSettings, GuardrailFunctionOutput, input_guardrail, InputGuardrailTripwireTriggered
+from openai.types.responses import ResponseTextDeltaEvent
+from agents import Agent, Runner, function_tool, handoff, ModelSettings, GuardrailFunctionOutput, input_guardrail, InputGuardrailTripwireTriggered, output_guardrail, ToolGuardrailFunctionOutput, tool_output_guardrail
 from agents.run_config import RunConfig
 from agents.run_error_handlers import RunErrorHandlerResult
-from config import FIXED_WORKERS, TAX_PERCENTAGE
+from config import FIXED_WORKERS, TAX_PERCENTAGE, FALLBACK_MODELS, ROUTER_MODEL
 from agent_system.provider import ACTIVE_MODEL, get_model_by_name
 from tools.bus import (
     record_production_batch, mark_worker_absent, mark_all_workers_absent,
@@ -85,162 +86,269 @@ async def _greeting_handler(
     return GuardrailFunctionOutput(tripwire_triggered=False, output_info="")
 
 
+# ── Output Guardrails ──────────────────────────────────
+
+FINANCIAL_KEYWORDS = re.compile(
+    r"(Rs\s*[\d,]+\.?\d*|salary|wage|payslip|tax|deduction|net\s*payable|gross|rate\s*per\s*piece)",
+    re.IGNORECASE,
+)
+
+
+@output_guardrail(name="Financial data protector")
+async def _finance_output_guardrail(
+    ctx, agent, output: str
+) -> GuardrailFunctionOutput:
+    """Prevent financial data leakage from non-finance agents."""
+    agent_name = getattr(agent, "name", "")
+    if agent_name in ("FinanceAgent", "Router"):
+        return GuardrailFunctionOutput(tripwire_triggered=False, output_info="")
+    if FINANCIAL_KEYWORDS.search(output):
+        return GuardrailFunctionOutput(
+            tripwire_triggered=True,
+            output_info="Share the quantity summary without financial breakdown.",
+        )
+    return GuardrailFunctionOutput(tripwire_triggered=False, output_info="")
+
+
+@tool_output_guardrail
+async def _production_tool_output_guardrail(data) -> ToolGuardrailFunctionOutput:
+    """Ensure production tool output contains confirmation data."""
+    text = str(data.output or "")
+    if "Invalid" in text or "error" in text.lower():
+        return ToolGuardrailFunctionOutput.reject_content(
+            "Entry failed — ask user for corrected data."
+        )
+    return ToolGuardrailFunctionOutput.allow()
+
+
 # ── Instructions per specialist ───────────────────────
 
-PERSONA = """You are a senior factory accountant with 20 years of experience at a manufacturing plant.
-You speak Urdu and English mix naturally (Roman Urdu).
-You are precise, professional, but friendly with workers.
-Financial details are shared only with the father.
-You double-check numbers before confirming."""
+PERSONA = """You are a factory accountant speaking Roman Urdu/English.
+Complete requests naturally without explaining your process or internal workings."""
 
-PRODUCTION_RULES = """<rules>
-- Production entry → log_production_tool. Include "date":"YYYY-MM-DD" for past dates (omit for today).
-- "sab" / "sab ny" = all workers (Naeem, Kaleem, Akbar, Suny, Sajjad, Irfan, Kashif, Gulmast). Each worker gets same product and quantity.
-- Multi-row tables → parse_table_tool
-- Worker absent → mark_absent_tool with optional reason (e.g. "Eid", "sick")
-- Some present + some absent → batch_daily_update_tool (entries_json + absent_workers in one call)
-- Edit entry → update_entry_tool. Pass worker, product_code, date_str, entry_id=0 to auto-lookup.
-- Tool warns "already has data" → tell user, ask for confirmation resend
-- Multiple workers absent same date → workers="all"
-- Worker already absent → report to user, don't retry
-- Only record data explicitly stated by user. If information is missing, ask for it.
-</rules>"""
-
-REPORTING_RULES = """<rules>
-- Status check → get_daily_status_tool
-- Summary (daily/weekly/monthly) → get_summary_tool
-- Catalog/list → list_catalog_tool
-- Email manager (quantities only) → send_report_tool
-- Share only quantity-based summaries. Financial data is confidential to father only.
-- Tool returns "NO_DATA" → tell user no data exists for that date; do NOT guess or speculate.
-</rules>"""
-
-FINANCE_RULES = """<rules>
-- Department rejection → log_rejection_tool (equal distribution)
-- Worker advance → record_advance_tool
-- Generate payslip PDF → generate_payslip_tool
-- If month/year not specified, use current month (June 2026)
-- Generate immediately. If gross amount is 0 (no production data), inform user and skip payslip.
-</rules>"""
-
-
-HANDOFF_FOOTER = """
-You are now handling the user directly. Respond completely in Roman Urdu mixed with English.
-Use available tools as needed. After tool execution, explain the result to the user in a friendly way."""
+WORKER_LIST = ', '.join(FIXED_WORKERS)
+CONTEXT_BLOCK = f"""Workers: {WORKER_LIST}
+Products: NUT, 10*20, 6*25, 6*30, 10*25 (convert ×/x → *)
+Today: {date.today()}"""
 
 
 def _production_instructions(ctx, agent) -> str:
-    return f"""{PERSONA}
+    return f"""
+<role>
+You record production data by calling tools. Text alone does not save anything — 
+you must call the appropriate tool to persist every entry.
+</role>
 
-<domain>Production Data Entry</domain>
-
-<context>Workers: {', '.join(FIXED_WORKERS)}
+<context>
+Workers: {WORKER_LIST}
 Products: NUT, 10*20, 6*25, 6*30, 10*25 (convert ×/x → *)
-Today: {date.today()}</context>
+Today: {date.today()}
+</context>
 
-{PRODUCTION_RULES}
-{HANDOFF_FOOTER}"""
-
-
-def _reporting_instructions(ctx, agent) -> str:
-    return f"""{PERSONA}
-
-<domain>Production Reporting</domain>
-
-<context>Workers: {', '.join(FIXED_WORKERS)}
-Products: NUT, 10*20, 6*25, 6*30, 10*25
-Today: {date.today()}</context>
-
-{REPORTING_RULES}
-{HANDOFF_FOOTER}"""
-
-
-def _finance_instructions(ctx, agent) -> str:
-    return f"""{PERSONA}
-
-<domain>Finance & Payslips</domain>
-
-<context>Workers: {', '.join(FIXED_WORKERS)}
-Products: NUT, 10*20, 6*25, 6*30, 10*25
-Today: {date.today()}</context>
-
-{FINANCE_RULES}
-{HANDOFF_FOOTER}"""
-
-
-def _router_instructions(ctx, agent) -> str:
-    return f"""{PERSONA}
-
-<domain>Router — classify and delegate</domain>
-
-<context>Workers: {', '.join(FIXED_WORKERS)}
-Products: NUT, 10*20, 6*25, 6*30, 10*25
-Today: {date.today()}</context>
+<tools>
+- log_production_tool: JSON array of entries. "sab" = all 8 workers. Optional "date":"YYYY-MM-DD".
+- batch_daily_update_tool: Production entries + absences in one call.
+- parse_table_tool: Pipe/border table for one worker across multiple dates.
+- mark_absent_tool: Single worker or "all". Optional reason + date.
+- update_entry_tool: Change quantity. Provide worker+product+date or entry_id.
+</tools>
 
 <rules>
-1. Identify intent from user message
-2. If enough info present, delegate immediately with sensible defaults (today, current month).
-3. Return the specialist's response as-is
-
-Routing:
-- Production data entry, tables, absences, edits → delegate_production
-- Summary, status, catalog, email reports → delegate_reporting
-- Rejections, advances, payslips → delegate_finance
-- Greeting → greet. Random/unclear input → politely ask what they need.
-- Output says "resend to overwrite" / "already exists" → include in your response
-
-Response format: Always respond in Roman Urdu mixed with English, matching user's language.
+- Call the tool first, then confirm with a short message.
+- Duplicate exists? Say so. User resends same data → overwrite.
+- Use "sab" when all 8 workers have same product+quantity.
+- For mixed data (different quantities per worker, some absent), build one JSON array and call once.
+- Ambiguous product codes like 627/6*27/6 27 → ask "6*25 ya 6*30?"
+- Past dates: add "date":"YYYY-MM-DD" in entry JSON.
+- Only record what is explicitly stated.
+- If a worker is excluded ("k ilawa", "except", "baqi", "sivay"), record the included workers' entries first, then ask about the excluded worker's status before marking anything.
+- Do not record 0 for the excluded worker. Do not guess. Ask first.
 </rules>
 
 <examples>
-User: hello
-You: 👋 Hello! Main factory accountant hoon. Production entry, reports, payslips, aur advances handle karta hoon. Aap kya karna chahte hain?
-
 User: Naeem ne 300 nut kiye
-(delegate_production)
+→ Call log_production_tool
+Answer: Naeem ka 300 NUT record kar diya ✅
 
+User: sab ny 300 nut kiye, Sunny chutti par hai
+→ Call batch_daily_update_tool(7×300 NUT, absent=["Sunny"])
+Answer: 7 workers ne 300 NUT kiye. Sunny absent ✅
+
+User: sab kay 300 nut hain Kaleem k ilawa
+→ Call log_production_tool for 7 workers (300 NUT each)
+Answer: 7 workers ka 300 NUT record kar diya ✅. Kaleem ka kya hai? Absent tha ya chutti thi?
+  User: chutti thi
+  → Call mark_absent_tool("Kaleem")
+  Answer: Kaleem absent ✅
+
+User: aj ka data likho naeem k 3000 nut kaaleem aur baqiyon k 2000 nut aur naeem k ilawa sab nay 3000 10 20 bnaya tha aur 400 625
+→ Build complete JSON for all entries, call log_production_tool
+Answer: Naeem: 3000 NUT ✅ Kaleem: 2000 NUT ✅ baki 6: 2000 NUT each ✅. Naeem k ilawa sab: 3000 10*20 + 400 6*25 ✅
+
+User: Naeem ne 300 nut kiye (same data again)
+→ Tool returns "already exists"
+Answer: Naeem ke paas pehle se 300 NUT hai. Dobara bhejain to overwrite.
+
+User: Sunny ki chutti hai
+→ Call mark_absent_tool("Sunny")
+Answer: Sunny ko aaj absent mark kar diya ✅
+
+User: 20 June ko Naeem ka 250 kar do
+→ Call update_entry_tool or log_production_tool with date
+Answer: 20 June ka Naeem ka NUT 250 kar diya ✅
+</examples>"""
+
+
+def _reporting_instructions(ctx, agent) -> str:
+    return f"""
+<role>
+You check and share production data. Call the correct tool to retrieve real data — 
+never invent numbers.
+</role>
+
+<context>
+Workers: {WORKER_LIST}
+Products: NUT, 10*20, 6*25, 6*30, 10*25
+Today: {date.today()}
+</context>
+
+<tools>
+- get_daily_status_tool: Present/absent workers + product totals for a date.
+- get_summary_tool: Daily/weekly/monthly per-worker quantities.
+- send_report_tool: Email quantity-only report to manager.
+- list_catalog_tool: Workers, product rates, today's status.
+</tools>
+
+<rules>
+- Call the tool to get data. Never guess numbers.
+- "email" → send_report_tool.
+- "status" / "check" / "kya hai" → get_daily_status_tool or get_summary_tool.
+- "catalog" / "workers" / "products" → list_catalog_tool.
+</rules>
+
+<examples>
 User: aj ka status kya hai
-(delegate_reporting)
+→ Call get_daily_status_tool
+Answer: Aaj 5 workers present hain. Total 2,400 pieces. 3 absent.
 
-User: Kaleem ki payslip banao
-(delegate_finance)
+User: manager ko email bhej do
+→ Call send_report_tool
+Answer: Manager ko email bhej diya ✅
 
-User: 22 June ko Naeem ka data?
-(delegate_reporting)
-→ ReportingAgent calls get_daily_status_tool(date_str="2026-06-22")
+User: catalog dikhao
+→ Call list_catalog_tool
+Answer: Workers: Naeem, Kaleem, Akbar... Products: NUT, 10*20...
 
-User: aj ka data likha hwa hai
-(delegate_reporting)
-→ ReportingAgent calls get_daily_status_tool() to show today's status
+User: 22 June ka data check karo
+→ Call get_daily_status_tool("2026-06-22")
+Answer: 22 June ko 4 workers present. Total 1,800 pieces.
 
-User: kya haal hai?
-Aapka shukriya! Main yahan hoon. Koi production, report, ya payslip ka kaam ho toh bataiye.
+User: monthly summary do June 2026
+→ Call get_summary_tool("monthly", 2026, 6)
+Answer: June 2026 total: 45,000 pieces across 5 products.
+</examples>"""
 
-User: random gibberish or unclear input
-Ask politely: "Bhai, kya karna chahte hain? Production, report, ya payslip?"
+
+def _finance_instructions(ctx, agent) -> str:
+    return f"""
+<role>
+You handle payslips, advances, and rejections. Call the correct tool — 
+text alone does not generate payslips or record transactions.
+</role>
+
+<context>
+Workers: {WORKER_LIST}
+Products: NUT, 10*20, 6*25, 6*30, 10*25
+Default month: {date.today().strftime("%B %Y")}
+</context>
+
+<tools>
+- log_rejection_tool: Department rejection, equal distribution, exclude some workers.
+- record_advance_tool: Advance payment for a worker in a month.
+- generate_payslip_tool: PDF payslip, single worker or all workers.
+</tools>
+
+<rules>
+- Call the tool to perform operations. Text alone does nothing.
+- Default to current month if user does not specify.
+- No production data for a worker → say so.
+- Unknown worker name → "Yeh worker list main nahi hai. Sahi naam batao."
+</rules>
+
+<examples>
+User: Kaleem ki payslip banao June 2026
+→ Call generate_payslip_tool(2026, 6, "Kaleem")
+Answer: Kaleem ki June payslip ready hai ✅
+
+User: Naeem ko 2000 advance do
+→ Call record_advance_tool("Naeem", 2000, 2026, 6)
+Answer: Naeem ka Rs 2,000 advance June ke liye record kar diya ✅
+
+User: NUT ki rejection 50 hai
+→ Call log_rejection_tool(2026, 6, "NUT", 50)
+Answer: 50 NUT rejection record ki. Har worker par 6 pieces.
+
+User: Kaleem ki payslip banao (no data)
+→ Tool returns no production data
+Answer: Kaleem ka June main koi production data nahi mila.
+
+User: unknown worker ka advance
+→ Tool returns unknown
+Answer: Yeh worker list main nahi hai. Sahi naam batao.
+</examples>"""
+
+
+def _router_instructions(ctx, agent) -> str:
+    return f"""
+<role>
+You are a factory accountant. Understand what the user wants and hand off to the correct specialist.
+Never answer production/reporting/finance questions directly — always hand off.
+</role>
+
+<context>
+Workers: {WORKER_LIST}
+Products: NUT, 10*20, 6*25, 6*30, 10*25 (convert ×/x → *)
+Today: {date.today()}
+</context>
+
+<handoffs>
+- delegate_production  → production entry, absences, tables, entry edits
+- delegate_reporting   → daily status, summaries, catalog, email reports
+- delegate_finance     → payslips, advances, rejections
+</handoffs>
+
+<rules>
+- Greeting / unclear → respond naturally in Roman Urdu/English.
+- "system kaise kaam karta hai" → "Koi production record karwana hai ya report chahiye?"
+- Keep responses short.
+</rules>
+
+<examples>
+User: Naeem ne 300 nut kiye          → delegate_production
+User: aj ka status kya hai             → delegate_reporting
+User: Kaleem ki payslip banao           → delegate_finance
+User: manager ko email bhej do          → delegate_reporting
+User: kya haal hai                      → "👋 Main yahan hoon! Koi kaam hai?"
+User: yeh system kaise kaam karta hai   → "Koi production record karwana hai ya report chahiye?"
+User: unclear                           → "Bhai, kya karna chahte hain? Production, report, ya payslip?"
 </examples>"""
 
 
 # ── Production Tools ──────────────────────────────────
 
 @function_tool
-def log_production_tool(entries_json: str) -> str:
-    """Record single or multiple production entries using extracted JSON.
+async def log_production_tool(entries_json: str) -> str:
+    """Record production entries from JSON data.
 
-    Use for any number of entries where you can identify worker name, product code, and quantity from natural language.
-    Example input: "Naeem made 300 NUT and 150 10*20"
-    Example JSON: [{"worker":"Naeem","product_code":"NUT","quantity":300},{"worker":"Naeem","product_code":"10*20","quantity":150}]
-    For past dates, include "date":"YYYY-MM-DD" in each entry object.
-    "sab" or "sab ny" means all workers from the fixed list.
-
-    Do NOT use for pasted tables — use parse_table_tool instead.
+    Accepts worker name, product code, quantity, and optional date.
+    "sab" / "sab ny" = all 8 workers with same product/quantity.
+    Past dates: include "date":"YYYY-MM-DD" in each entry.
 
     Args:
-        entries_json: JSON array string. Format: [{"worker":"Kaleem","product_code":"NUT","quantity":300}]
-                     Optional field: "date":"YYYY-MM-DD" for past dates.
+        entries_json: JSON array. Format: [{"worker":"Kaleem","product_code":"NUT","quantity":300}]
 
     Returns:
-        Confirmation per entry. May show warning if data already exists.
+        Confirmation per entry.
     """
     try:
         entries = json.loads(entries_json) if isinstance(entries_json, str) else entries_json
@@ -254,44 +362,39 @@ def log_production_tool(entries_json: str) -> str:
                 year = int(date_str[:4])
                 if year < 2026:
                     return f"⚠️ System records start from 2026. Cannot log data for year {year}."
-        return record_production_batch(entries)
+        return await record_production_batch(entries)
     except (json.JSONDecodeError, TypeError):
         return "Invalid JSON format."
 
 
 @function_tool
 def parse_table_tool(worker: str, table_text: str) -> str:
-    """Parse a multi-row ASCII production table pasted by the user and record all entries.
+    """Parse a multi-row ASCII production table and record all entries.
 
-    The table must have a DATE column and product columns (NUT, 6*30, 6*25, 10*20, 10*25).
-    Handles box-drawing characters (┌─┐└┘├┤│) and plain pipe tables.
-    Supports dates in YYYY-MM-DD, MM-DD-YYYY, and DD-MM-YYYY formats.
-
-    Only call this when user pastes a multi-row table. NOT for single-line messages.
+    Handles box-drawing characters and pipe tables.
+    Supports YYYY-MM-DD, MM-DD-YYYY, and DD-MM-YYYY date formats.
 
     Args:
         worker: Worker name (e.g. 'Naeem')
-        table_text: Raw table text as pasted by user, including pipe/border characters
+        table_text: Raw table text including pipe/border characters
 
     Returns:
-        Per-date results showing what was recorded
+        Per-date confirmation of recorded entries.
     """
     return parse_table(worker, table_text)
 
 
 @function_tool
 def mark_absent_tool(workers: str, date_str: Optional[str] = None, reason: Optional[str] = None) -> str:
-    """Mark one or all workers as absent for a given date. Optionally include a reason (e.g. "Eid", "sick", "public holiday").
-
-    For multiple workers absent on the same date, use workers="all".
+    """Mark one or all workers absent for a date.
 
     Args:
-        workers: Worker name (e.g. 'Kaleem') or 'all' to mark all workers absent
-        date_str: Date in YYYY-MM-DD format (default: today)
-        reason: Optional reason like 'Eid', 'public holiday', 'sick leave'
+        workers: Worker name or 'all' for everyone
+        date_str: Date YYYY-MM-DD (default: today)
+        reason: Reason like 'Eid', 'sick'
 
     Returns:
-        Confirmation of which workers were marked absent
+        Confirmation message.
     """
     ds = date_str or date.today().isoformat()
     rsn = reason or ""
@@ -304,21 +407,20 @@ def mark_absent_tool(workers: str, date_str: Optional[str] = None, reason: Optio
 def update_entry_tool(entry_id: int = 0, new_quantity: int = 0, reason: Optional[str] = None,
                        worker: Optional[str] = None, product_code: Optional[str] = None,
                        date_str: Optional[str] = None) -> str:
-    """Update the quantity of an existing production entry.
+    """Update an existing production entry.
 
-    BEST APPROACH: Provide worker, product_code, and date_str to auto-lookup the correct entry.
-    Alternatively, provide entry_id if you already know it from get_daily_status_tool output.
+    Provide worker + product_code + date_str for auto-lookup, or entry_id directly.
 
     Args:
-        entry_id: Entry ID (e.g. 42). Pass 0 if unknown — use worker/product_code/date_str instead.
-        new_quantity: New quantity value (must be positive)
-        reason: Optional reason for the change
-        worker: Worker name (e.g. 'Naeem') — used for auto-lookup if entry_id is 0
-        product_code: Product code (e.g. 'NUT') — used for auto-lookup if entry_id is 0
-        date_str: Date YYYY-MM-DD — used for auto-lookup if entry_id is 0
+        entry_id: Entry ID (0 = auto-lookup via worker/product_code/date_str)
+        new_quantity: New quantity (must be positive)
+        reason: Reason for change
+        worker: Worker name for auto-lookup
+        product_code: Product code for auto-lookup
+        date_str: Date YYYY-MM-DD for auto-lookup
 
     Returns:
-        Old vs new values confirmation
+        Old vs new confirmation.
     """
     actual_id = entry_id
 
@@ -341,24 +443,15 @@ def update_entry_tool(entry_id: int = 0, new_quantity: int = 0, reason: Optional
 
 
 @function_tool
-def batch_daily_update_tool(entries_json: str, absent_workers: Optional[str] = None) -> str:
-    """Record production entries AND mark workers absent in a single call.
-
-    Use when some workers are present (producing) and some are absent (chutti/leave).
-    For example: "sab ny 300 nut bnaye hain, sunny ki chutti hai"
-    → All workers except Suny made 300 NUT, Suny is absent.
-
-    For production-only or absent-only, use the individual tools instead.
+async def batch_daily_update_tool(entries_json: str, absent_workers: Optional[str] = None) -> str:
+    """Record production and mark absences in one call.
 
     Args:
-        entries_json: JSON array of production entries.
-            Format: [{"worker":"Kaleem","product_code":"NUT","quantity":300}]
-            Optional "date":"YYYY-MM-DD" for past dates.
-        absent_workers: Optional JSON array of worker names to mark absent.
-            Format: '["Naeem","Sajjad"]' or null
+        entries_json: JSON array. Format: [{"worker":"Kaleem","product_code":"NUT","quantity":300}]
+        absent_workers: JSON array of worker names to mark absent, or null.
 
     Returns:
-        Combined results of all operations
+        Combined results.
     """
     results = []
     try:
@@ -368,7 +461,7 @@ def batch_daily_update_tool(entries_json: str, absent_workers: Optional[str] = N
         if not isinstance(parsed, list):
             results.append("[Production] Invalid: must be an array")
         else:
-            results.append(f"[Production]\n{record_production_batch(parsed)}")
+            results.append(f"[Production]\n{await record_production_batch(parsed)}")
     except (json.JSONDecodeError, TypeError) as e:
         results.append(f"[Production] Invalid JSON: {e}")
 
@@ -390,13 +483,13 @@ def batch_daily_update_tool(entries_json: str, absent_workers: Optional[str] = N
 
 @function_tool
 def get_daily_status_tool(date_str: Optional[str] = None) -> str:
-    """Check production data for a specific date. Returns which workers have data, which are absent, and product totals.
+    """Check production data for a date. Shows present/absent workers and totals.
 
     Args:
-        date_str: Date in YYYY-MM-DD format ONLY, e.g. "2026-06-22". Do NOT pass natural language. Pass null/None for today.
+        date_str: Date YYYY-MM-DD (default: today).
 
     Returns:
-        Status message with present/absent workers and product totals
+        Status with present/absent workers and product totals.
     """
     ds = date_str or date.today().isoformat()
     if not re.match(r"^\d{4}-\d{2}-\d{2}$", ds):
@@ -408,16 +501,16 @@ def get_daily_status_tool(date_str: Optional[str] = None) -> str:
 
 @function_tool
 def get_summary_tool(period: str = "daily", year: Optional[int] = None, month: Optional[int] = None, day: Optional[int] = None) -> str:
-    """Production summary for daily, weekly, or monthly period. Quantities only — no financial data.
+    """Production summary for a period.
 
     Args:
-        period: 'daily', 'weekly', or 'monthly' (default: 'daily')
+        period: 'daily', 'weekly', or 'monthly'
         year: Year (default: current)
         month: Month 1-12 (default: current)
         day: Day 1-31 (default: today)
 
     Returns:
-        Formatted summary with product totals per worker per day
+        Summary with product totals per worker.
     """
     today = date.today()
     y = year or today.year
@@ -428,16 +521,16 @@ def get_summary_tool(period: str = "daily", year: Optional[int] = None, month: O
 
 @function_tool
 def send_report_tool(period: str = "daily", year: Optional[int] = None, month: Optional[int] = None, day: Optional[int] = None) -> str:
-    """Email production summary to the manager. Quantities only — no financials, no individual worker data.
+    """Email production summary to the manager.
 
     Args:
-        period: 'daily', 'weekly', or 'monthly' (default: 'daily')
+        period: 'daily', 'weekly', or 'monthly'
         year: Year (default: current)
         month: Month 1-12 (default: current)
         day: Day 1-31 (default: today)
 
     Returns:
-        Email delivery status
+        Delivery status.
     """
     from tools.email_tools import send_summary
     today = date.today()
@@ -446,10 +539,10 @@ def send_report_tool(period: str = "daily", year: Optional[int] = None, month: O
 
 @function_tool
 def list_catalog_tool() -> str:
-    """List all workers, products with rates, and today's production status.
+    """List all workers, products, and today's status.
 
     Returns:
-        Catalog info including worker list, product rates, and current date
+        Worker list, product rates, and current date.
     """
     return get_catalog()
 
@@ -458,17 +551,19 @@ def list_catalog_tool() -> str:
 
 @function_tool
 def log_rejection_tool(year: int, month: int, product_code: str, total_qty: int, excluded_workers: Optional[str] = None) -> str:
-    """Record department-level rejection quantity for a month. Rejection value is equally distributed among eligible workers.
+    """Record department-level rejection for a month.
+
+    Rejection is equally distributed among eligible workers.
 
     Args:
         year: Year (e.g. 2026)
-        month: Month number 1-12
-        product_code: Product code (NUT, 10*20, 6*25, 6*30, 10*25)
-        total_qty: Total rejected pieces at department level
-        excluded_workers: JSON array of worker names to exclude from distribution, or null
+        month: Month 1-12
+        product_code: NUT, 10*20, 6*25, 6*30, or 10*25
+        total_qty: Total rejected pieces
+        excluded_workers: JSON array of workers to exclude, or null
 
     Returns:
-        Confirmation with distribution breakdown showing each worker's share
+        Distribution confirmation.
     """
     excluded = []
     if excluded_workers:
@@ -481,33 +576,32 @@ def log_rejection_tool(year: int, month: int, product_code: str, total_qty: int,
 
 @function_tool
 def record_advance_tool(worker: str, amount: float, year: int, month: int, description: Optional[str] = None) -> str:
-    """Record an advance payment given to a worker. Deducted automatically from their monthly payslip.
+    """Record advance payment to a worker.
 
     Args:
-        worker: Worker name (e.g. 'Kaleem')
-        amount: Advance amount in rupees
-        year: Year (e.g. 2026)
-        month: Month number 1-12
-        description: Optional reason for the advance
+        worker: Worker name
+        amount: Amount in rupees
+        year: Year
+        month: Month 1-12
+        description: Optional reason
 
     Returns:
-        Confirmation with total advances for this worker this month
+        Confirmation with monthly total.
     """
     return record_worker_advance(worker, amount, year, month, description or "")
 
 
 @function_tool
 def generate_payslip_tool(year: int, month: int, worker: Optional[str] = None) -> str:
-    """Generate PDF payslip for one worker or all workers for a given month.
-    Calculates gross (quantity × rate), rejection deduction, advance deduction, tax percentage, and net payable.
+    """Generate PDF payslip for a worker or all workers.
 
     Args:
-        year: Year (e.g. 2026)
-        month: Month number 1-12
-        worker: Worker name for single payslip, or null/empty for ALL workers
+        year: Year
+        month: Month 1-12
+        worker: Worker name, or null/empty for all workers
 
     Returns:
-        File paths for generated payslips with breakdown summary
+        Confirmation message.
     """
     today = date.today()
     y = year or today.year
@@ -558,15 +652,12 @@ def generate_payslip_tool(year: int, month: int, worker: Optional[str] = None) -
         net_payable = round(gross_total - rejection_value - advance_total - tax_amount, 2)
 
         save_payslip(wid, y, m, gross_total, tax_amount, rejection_value, advance_total, net_payable)
-        pdf_path, xls_path = generate_payslip_files(w, y, m)
+        generate_payslip_files(w, y, m)
 
         results.append(
-            f"  {w}: Gross Rs {gross_total:,.2f}, "
-            f"Reject Rs {rejection_value:,.2f}, "
-            f"Advance Rs {advance_total:,.2f}, "
-            f"Tax Rs {tax_amount:,.2f}, "
-            f"Net Rs {net_payable:,.2f}\n"
-            f"    PDF: {pdf_path}\n    Excel: {xls_path}"
+            f"  {w}: {y}-{m:02d} payslip ready — "
+            f"Gross Rs {gross_total:,.0f}, "
+            f"Net Rs {net_payable:,.0f}"
         )
 
     if not results:
@@ -579,8 +670,21 @@ def generate_payslip_tool(year: int, month: int, worker: Optional[str] = None) -
 def _create_agents(router_model_override=None, specialist_model_override=None):
     s_model = specialist_model_override or router_model_override or ACTIVE_MODEL
     r_model = router_model_override or ACTIVE_MODEL
-    base_settings = ModelSettings(
-        temperature=0.5,
+
+    prod_settings = ModelSettings(
+        temperature=0.2,
+        top_p=0.9,
+        max_tokens=2000,
+        parallel_tool_calls=True,
+    )
+    report_settings = ModelSettings(
+        temperature=0.3,
+        top_p=0.9,
+        max_tokens=2000,
+        parallel_tool_calls=True,
+    )
+    finance_settings = ModelSettings(
+        temperature=0.3,
         top_p=0.9,
         max_tokens=2000,
         parallel_tool_calls=True,
@@ -590,7 +694,7 @@ def _create_agents(router_model_override=None, specialist_model_override=None):
         name="ProductionAgent",
         instructions=_production_instructions,
         model=s_model,
-        model_settings=base_settings,
+        model_settings=prod_settings,
         tools=[
             log_production_tool,
             parse_table_tool,
@@ -604,7 +708,8 @@ def _create_agents(router_model_override=None, specialist_model_override=None):
         name="ReportingAgent",
         instructions=_reporting_instructions,
         model=s_model,
-        model_settings=base_settings,
+        model_settings=report_settings,
+        output_guardrails=[_finance_output_guardrail],
         tools=[
             get_daily_status_tool,
             get_summary_tool,
@@ -617,7 +722,7 @@ def _create_agents(router_model_override=None, specialist_model_override=None):
         name="FinanceAgent",
         instructions=_finance_instructions,
         model=s_model,
-        model_settings=base_settings,
+        model_settings=finance_settings,
         tools=[
             log_rejection_tool,
             record_advance_tool,
@@ -637,18 +742,22 @@ def _create_agents(router_model_override=None, specialist_model_override=None):
         model=r_model,
         model_settings=router_settings,
         input_guardrails=[_greeting_handler, _input_sanitizer],
-        tools=[
-            production_agent.as_tool(
-                tool_name="delegate_production",
-                tool_description="Production data entry, tables, absences, and entry edits.",
+        output_guardrails=[_finance_output_guardrail],
+        handoffs=[
+            handoff(
+                production_agent,
+                tool_name_override="delegate_production",
+                tool_description_override="Production data entry, tables, absences, and entry edits.",
             ),
-            reporting_agent.as_tool(
-                tool_name="delegate_reporting",
-                tool_description="Production summary, daily status, catalog listing, and email reports.",
+            handoff(
+                reporting_agent,
+                tool_name_override="delegate_reporting",
+                tool_description_override="Production summary, daily status, catalog listing, and email reports.",
             ),
-            finance_agent.as_tool(
-                tool_name="delegate_finance",
-                tool_description="Payslip generation, advance payments, and rejection recording.",
+            handoff(
+                finance_agent,
+                tool_name_override="delegate_finance",
+                tool_description_override="Payslip generation, advance payments, and rejection recording.",
             ),
         ],
     )
@@ -661,22 +770,19 @@ async def chat(user_input: str, session_id: str = "default") -> str:
     memory = _get_memory(session_id)
     await memory.cleanup()
 
-    from config import LLM_PROVIDER
     from agent_system.provider import _models as all_models
 
-    primary = LLM_PROVIDER if LLM_PROVIDER in all_models else "gemini"
-    fallback_chain = ["mistral", "gemini", "gemini-3.1", "cerebras"]
-    fallback_chain = [m for m in fallback_chain if m in all_models]
-    if primary in fallback_chain:
-        fallback_chain.remove(primary)
-    fallback_chain.insert(0, primary)
+    fallback_chain = [m for m in FALLBACK_MODELS if m in all_models]
     if not fallback_chain:
-        fallback_chain = ["mistral"]
+        fallback_chain = list(all_models.keys())[:1] or ["mistral"]
     last_error = ""
 
     for attempt, model_name in enumerate(fallback_chain):
         specialist_model = get_model_by_name(model_name)
-        router_model = specialist_model
+        if ROUTER_MODEL and ROUTER_MODEL in all_models:
+            router_model = get_model_by_name(ROUTER_MODEL)
+        else:
+            router_model = specialist_model
         agent = _create_agents(
             router_model_override=router_model,
             specialist_model_override=specialist_model,
@@ -745,21 +851,18 @@ async def stream_chat(user_input: str, session_id: str = "default"):
     memory = _get_memory(session_id)
     await memory.cleanup()
 
-    from config import LLM_PROVIDER
     from agent_system.provider import _models as all_models
 
-    primary = LLM_PROVIDER if LLM_PROVIDER in all_models else "gemini"
-    fallback_chain = ["mistral", "gemini", "gemini-3.1", "cerebras"]
-    fallback_chain = [m for m in fallback_chain if m in all_models]
-    if primary in fallback_chain:
-        fallback_chain.remove(primary)
-    fallback_chain.insert(0, primary)
+    fallback_chain = [m for m in FALLBACK_MODELS if m in all_models]
     if not fallback_chain:
-        fallback_chain = ["mistral"]
+        fallback_chain = list(all_models.keys())[:1] or ["mistral"]
 
     for attempt, model_name in enumerate(fallback_chain):
         specialist_model = get_model_by_name(model_name)
-        router_model = specialist_model
+        if ROUTER_MODEL and ROUTER_MODEL in all_models:
+            router_model = get_model_by_name(ROUTER_MODEL)
+        else:
+            router_model = specialist_model
         agent = _create_agents(
             router_model_override=router_model,
             specialist_model_override=specialist_model,
@@ -773,14 +876,12 @@ async def stream_chat(user_input: str, session_id: str = "default"):
                 run_config=BASE_RUN_CONFIG,
             )
             async for event in result.stream_events():
-                if event.type == "raw_response_event" and hasattr(event.data, "delta"):
-                    delta = event.data.delta
-                    if delta and isinstance(delta, str):
-                        yield f"data: {delta}\n\n"
+                if event.type == "raw_response_event" and isinstance(event.data, ResponseTextDeltaEvent):
+                    if event.data.delta:
+                        yield f"data: {event.data.delta}\n\n"
 
-            final = await result.result()
             yield f"data: [DONE]\n\n"
-            track_usage(session_id, model_name, user_input, str(final.final_output)[:200])
+            track_usage(session_id, model_name, user_input, str(result.final_output)[:200])
             await memory.compact_if_needed()
             return
         except InputGuardrailTripwireTriggered as e:

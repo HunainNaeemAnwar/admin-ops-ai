@@ -25,7 +25,7 @@ from tools.database import (
     get_all_history_months,
 )
 from tools.production_tools import log_production_json
-from tools.export_tools import generate_worker_excel
+from tools.export_tools import generate_worker_excel_stream, generate_monthly_excel_stream
 
 router = APIRouter()
 admin_router = APIRouter(prefix="/admin")
@@ -228,20 +228,21 @@ async def api_worker_month(worker_name: str, year: int, month: int) -> WorkerMon
 
 
 @router.get("/api/worker/{worker_name}/excel/{year}/{month}")
-async def api_worker_excel(worker_name: str, year: int, month: int) -> FileResponse:
+async def api_worker_excel(worker_name: str, year: int, month: int):
     wid = get_worker_id(worker_name)
     if not wid:
         raise HTTPException(404, f"Worker '{worker_name}' not found")
     if month < 1 or month > 12:
         raise HTTPException(400, "Invalid month")
 
-    filepath = generate_worker_excel(worker_name, year, month)
-    if not filepath:
+    result = generate_worker_excel_stream(worker_name, year, month)
+    if not result:
         raise HTTPException(404, "No data for this worker and month")
-    return FileResponse(
-        filepath,
-        filename=f"{worker_name}_{year}_{month:02d}.xlsx",
+    buf, filename = result
+    return StreamingResponse(
+        buf,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 
@@ -404,17 +405,16 @@ async def admin_monthly_excel(
     user: CurrentUser,
     year: Annotated[Optional[int], Query()] = None,
     month: Annotated[Optional[int], Query()] = None,
-) -> FileResponse:
+):
     require_auth(user)
-    from tools.export_tools import generate_excel_report
     today = date.today()
     y = year or today.year
     m = month or today.month
-    filepath = generate_excel_report(period="monthly", year=y, month=m)
-    return FileResponse(
-        filepath,
+    buf, filename = generate_monthly_excel_stream(y, m)
+    return StreamingResponse(
+        buf,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        filename=f"report_monthly_{y}-{m:02d}.xlsx",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 

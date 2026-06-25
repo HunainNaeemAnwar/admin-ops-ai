@@ -145,15 +145,19 @@ export function WorkerMonthTable({ workerName, year, month, products, refreshKey
                           key={code}
                           className="whitespace-nowrap px-1.5 py-2 text-right sm:px-3 sm:py-2.5"
                         >
-                          <span
-                            className="inline-block rounded px-1 py-0.5 text-[10px] font-medium sm:text-xs"
-                            style={{
-                              background: "rgba(220, 38, 38, 0.1)",
-                              color: "var(--color-destructive)",
-                            }}
-                          >
-                            ABSENT
-                          </span>
+                          {code === productCodes[0] && day.reason ? (
+                            <span
+                              className="inline-block rounded px-1 py-0.5 text-[10px] font-medium sm:text-xs"
+                              style={{
+                                background: "rgba(220, 38, 38, 0.1)",
+                                color: "var(--color-destructive)",
+                              }}
+                            >
+                              {day.reason}
+                            </span>
+                          ) : (
+                            <span style={{ color: "var(--color-muted-light)" }}>-</span>
+                          )}
                         </td>
                       )
                     }

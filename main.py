@@ -5,14 +5,25 @@ from datetime import date, datetime
 from dotenv import load_dotenv
 load_dotenv()
 
-from config import CEREBRAS_API_KEY, OPENAI_API_KEY, GMAIL_CLIENT_ID
+from config import (
+    OPENAI_API_KEY, GMAIL_CLIENT_ID,
+    LLM_PROVIDER, CEREBRAS_API_KEY, GEMINI_API_KEY, MISTRAL_API_KEY,
+)
 
 
 def check_config():
-    if not CEREBRAS_API_KEY or CEREBRAS_API_KEY == "your_cerebras_api_key_here":
-        print("ERROR: CEREBRAS_API_KEY not set in .env file!")
-        print("Edit .env and add your Cerebras API key.")
-        return False
+    provider_key_map = {
+        "cerebras": ("CEREBRAS_API_KEY", CEREBRAS_API_KEY),
+        "gemini": ("GEMINI_API_KEY", GEMINI_API_KEY),
+        "mistral": ("MISTRAL_API_KEY", MISTRAL_API_KEY),
+        "openai": ("OPENAI_API_KEY", OPENAI_API_KEY),
+    }
+    if LLM_PROVIDER in provider_key_map:
+        key_name, key_value = provider_key_map[LLM_PROVIDER]
+        if not key_value:
+            print(f"ERROR: {key_name} not set in .env file!")
+            print(f"LLM_PROVIDER is '{LLM_PROVIDER}' but corresponding API key is missing.")
+            return False
     if not OPENAI_API_KEY:
         print("WARNING: OPENAI_API_KEY not set — tracing will not be exported to OpenAI dashboard.")
         print("Set OPENAI_API_KEY in .env to view traces at https://platform.openai.com/traces.")

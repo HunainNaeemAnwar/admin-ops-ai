@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect } from "react"
-import { useRouter } from "next/navigation"
+import { usePathname, useRouter } from "next/navigation"
 import { useAuth } from "@/lib/auth"
 import { AdminSidebar } from "@/components/admin-sidebar"
 import { ChatWidgetLoader } from "@/components/chat-widget-loader"
@@ -14,6 +14,8 @@ export default function AdminLayout({
 }) {
   const { user, loading } = useAuth()
   const router = useRouter()
+  const pathname = usePathname()
+  const isDashboard = pathname === "/admin"
 
   useEffect(() => {
     if (!loading && !user?.authenticated) {
@@ -48,7 +50,7 @@ export default function AdminLayout({
         </div>
       </main>
       <BottomNav />
-      <ChatWidgetLoader />
+      {isDashboard && <ChatWidgetLoader />}
     </div>
   )
 }

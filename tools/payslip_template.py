@@ -24,9 +24,9 @@ SOFT_GREEN = colors.Color(0.85, 0.93, 0.85)
 DARK_GREEN = colors.Color(0.15, 0.45, 0.15)
 DARK_RED = colors.Color(0.75, 0.15, 0.15)
 
-FONT_NAME = "Times-Roman"
-FONT_BOLD = "Times-Bold"
-XL_FONT = "Times New Roman"
+FONT_NAME = "Helvetica"
+FONT_BOLD = "Helvetica-Bold"
+FONT_BOLD_ITALIC = "Helvetica-BoldOblique"
 URDU_FONT = "NotoNastaliqUrdu"
 URDU_FONT_BOLD = "NotoNastaliqUrdu-Bold"
 
@@ -66,7 +66,7 @@ def _p(text: str, size: int = 10, align: int = 0, bold: bool = False, color=BLAC
 def _section_heading(text: str) -> Paragraph:
     style = ParagraphStyle(
         "Section", alignment=0, fontSize=11, leading=14,
-        textColor=NAVY, spaceAfter=0, spaceBefore=0, fontName=FONT_BOLD,
+        textColor=NAVY, spaceAfter=0, spaceBefore=0, fontName=FONT_BOLD_ITALIC,
     )
     return Paragraph(text, style)
 
@@ -114,8 +114,8 @@ def render_pdf_payslip(data: dict, worker: str, year: int, month: int) -> str:
     all_codes = sorted(set(list(product_totals.keys()) + list(rejection_share.keys())))
 
     # ── HEADER BAR (Worker Name) ──
-    header_font = URDU_FONT_BOLD if _has_urdu(worker) else FONT_BOLD
-    header_style = ParagraphStyle("Header", alignment=1, fontSize=18, leading=22, textColor=WHITE, fontName=header_font)
+    header_font = URDU_FONT_BOLD if _has_urdu(worker) else FONT_BOLD_ITALIC
+    header_style = ParagraphStyle("Header", alignment=1, fontSize=20, leading=24, textColor=WHITE, fontName=header_font)
     header_table = Table(
         [[Paragraph(f"<b>{worker}</b>", header_style)]], colWidths=[180 * mm],
     )
