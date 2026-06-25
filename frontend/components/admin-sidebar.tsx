@@ -52,14 +52,24 @@ export function AdminSidebar() {
     >
       <div className="flex items-center justify-between border-b px-4 py-4" style={{ borderColor: "var(--color-border)" }}>
         {!collapsed && (
-          <span className="text-sm font-semibold" style={{ color: "var(--color-foreground)" }}>
-            Admin
-          </span>
+          <div className="flex items-center gap-2">
+            <div
+              className="flex h-8 w-8 items-center justify-center rounded-lg text-xs font-bold"
+              style={{ background: "var(--color-primary)", color: "var(--color-on-primary)" }}
+            >
+              AO
+            </div>
+            <span className="text-sm font-bold" style={{ color: "var(--color-foreground)" }}>
+              Admin Ops
+            </span>
+          </div>
         )}
         <button
-          className="rounded-md p-1 transition-colors hover:bg-surface-alt"
+          className="rounded-lg p-1.5 transition-colors"
           style={{ color: "var(--color-muted)" }}
           onClick={() => setCollapsed(!collapsed)}
+          onMouseEnter={(e) => e.currentTarget.style.background = "var(--color-surface-alt)"}
+          onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
         >
           {collapsed ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}
         </button>
@@ -73,12 +83,13 @@ export function AdminSidebar() {
             <Link
               key={item.href}
               href={item.href}
-              className={`flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors ${
-                isActive
-                  ? "bg-brand-green text-white"
-                  : "hover:bg-surface-alt"
-              }`}
-              style={!isActive ? { color: "var(--color-muted)" } : undefined}
+              className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-all duration-150"
+              style={{
+                background: isActive ? "var(--color-primary)" : "transparent",
+                color: isActive ? "var(--color-on-primary)" : "var(--color-muted)",
+              }}
+              onMouseEnter={(e) => { if (!isActive) e.currentTarget.style.background = "var(--color-surface-alt)" }}
+              onMouseLeave={(e) => { if (!isActive) e.currentTarget.style.background = "transparent" }}
             >
               <Icon size={18} />
               {!collapsed && <span>{item.label}</span>}
@@ -91,8 +102,10 @@ export function AdminSidebar() {
         <ThemeToggle />
         <button
           onClick={handleLogout}
-          className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors hover:bg-surface-alt"
+          className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors"
           style={{ color: "var(--color-muted)" }}
+          onMouseEnter={(e) => { e.currentTarget.style.color = "var(--color-destructive)"; e.currentTarget.style.background = "var(--color-surface-alt)" }}
+          onMouseLeave={(e) => { e.currentTarget.style.color = "var(--color-muted)"; e.currentTarget.style.background = "transparent" }}
         >
           <LogOut size={18} />
           {!collapsed && <span>Logout</span>}

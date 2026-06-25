@@ -62,7 +62,8 @@ export default function HomePage() {
         <div className="flex flex-col items-center gap-4">
           <p className="text-lg font-medium" style={{ color: "var(--color-destructive)" }}>{error}</p>
           <button
-            className="rounded-md bg-brand-green px-4 py-2 text-sm font-medium text-white hover:opacity-90 transition-opacity"
+            className="rounded-md px-4 py-2 text-sm font-medium text-white transition-opacity"
+            style={{ background: "var(--color-success)" }}
             onClick={handleRetry}
           >
             Retry
@@ -83,7 +84,10 @@ export default function HomePage() {
             <ThemeToggle />
             <a
               href="/login"
-              className="rounded-md bg-brand-green px-4 py-2 text-sm font-medium text-white hover:opacity-90 transition-opacity"
+              className="rounded-md px-4 py-2 text-sm font-medium text-white transition-opacity"
+              style={{ background: "var(--color-success)" }}
+              onMouseEnter={(e) => e.currentTarget.style.opacity = "0.9"}
+              onMouseLeave={(e) => e.currentTarget.style.opacity = "1"}
             >
               Admin Login
             </a>

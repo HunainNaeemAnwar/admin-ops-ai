@@ -6,7 +6,6 @@ import type { PayslipListResponse } from "@/lib/types"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Card } from "@/components/ui/card"
 import { Select } from "@/components/ui/select"
-import { Breadcrumbs } from "@/components/ui/breadcrumbs"
 import { Avatar } from "@/components/ui/avatar"
 import { FileText, Download, ChevronLeft, ChevronRight } from "lucide-react"
 
@@ -83,56 +82,58 @@ export default function PayslipsPage() {
     )
   }
 
-  const allNames = [...new Set([...(data?.pdfs || []), ...(data?.excels || [])])]
+  const allNames = [...new Set(data?.pdfs || [])]
   const allWorkers = allNames.map((n) => ({ key: n, ...parsePayslipName(n) }))
 
   const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000"
 
   return (
     <div className="space-y-4">
-      <Breadcrumbs />
-
       <h1 className="text-xl font-bold sm:text-2xl" style={{ color: "var(--color-foreground)" }}>
         Payslips
       </h1>
 
-      <div className="flex flex-wrap items-center gap-3">
-        <button
-          onClick={prevMonth}
-          className="rounded-md border p-2 transition-colors hover:bg-surface-alt"
-          style={{ borderColor: "var(--color-border)", color: "var(--color-muted)" }}
-          aria-label="Previous month"
-        >
-          <ChevronLeft size={18} />
-        </button>
-        <Select
-          label="Month"
-          options={MONTHS.map((m, i) => ({ value: String(i + 1), label: m }))}
-          value={String(month)}
-          onChange={(e) => setMonth(Number(e.target.value))}
-        />
-        <div className="flex flex-col gap-1">
-          <label className="text-xs font-medium" style={{ color: "var(--color-muted)" }}>Year</label>
-          <input
-            type="number"
-            value={year}
-            onChange={(e) => setYear(Number(e.target.value))}
-            className="rounded-md border px-3 py-2 text-sm"
-            style={{
-              borderColor: "var(--color-border)",
-              background: "var(--color-surface)",
-              color: "var(--color-foreground)",
-            }}
-          />
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+        <div className="flex items-end gap-2">
+          <button
+            onClick={prevMonth}
+            className="shrink-0 rounded-lg border-2 p-2.5 transition-colors"
+            style={{ borderColor: "var(--color-border)", color: "var(--color-muted)" }}
+            aria-label="Previous month"
+          >
+            <ChevronLeft size={18} />
+          </button>
+          <div className="flex-1 sm:w-auto">
+            <Select
+              label="Month"
+              options={MONTHS.map((m, i) => ({ value: String(i + 1), label: m }))}
+              value={String(month)}
+              onChange={(e) => setMonth(Number(e.target.value))}
+            />
+          </div>
+          <div className="flex flex-col gap-1.5 flex-1 sm:w-auto">
+            <label className="text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--color-muted)" }}>Year</label>
+            <input
+              type="number"
+              value={year}
+              onChange={(e) => setYear(Number(e.target.value))}
+              className="w-full rounded-lg border-2 px-3 py-2.5 text-sm font-medium transition-colors focus:outline-none"
+              style={{
+                borderColor: "var(--color-border)",
+                background: "var(--color-surface)",
+                color: "var(--color-foreground)",
+              }}
+            />
+          </div>
+          <button
+            onClick={nextMonth}
+            className="shrink-0 rounded-lg border-2 p-2.5 transition-colors"
+            style={{ borderColor: "var(--color-border)", color: "var(--color-muted)" }}
+            aria-label="Next month"
+          >
+            <ChevronRight size={18} />
+          </button>
         </div>
-        <button
-          onClick={nextMonth}
-          className="rounded-md border p-2 transition-colors hover:bg-surface-alt"
-          style={{ borderColor: "var(--color-border)", color: "var(--color-muted)" }}
-          aria-label="Next month"
-        >
-          <ChevronRight size={18} />
-        </button>
       </div>
 
       {!data || allWorkers.length === 0 ? (
@@ -163,18 +164,11 @@ export default function PayslipsPage() {
                   >
                     PDF
                   </th>
-                  <th
-                    className="px-4 py-2.5 text-center text-xs font-semibold uppercase tracking-wider"
-                    style={{ color: "var(--color-muted)" }}
-                  >
-                    Excel
-                  </th>
                 </tr>
               </thead>
               <tbody>
                 {allWorkers.map((p, i) => {
                   const hasPdf = data.pdfs.includes(p.key)
-                  const hasExcel = data.excels.includes(p.key)
                   return (
                     <tr
                       key={p.key}
@@ -204,25 +198,6 @@ export default function PayslipsPage() {
                           >
                             <Download size={14} />
                             PDF
-                          </a>
-                        ) : (
-                          <span style={{ color: "var(--color-muted-light)" }}>-</span>
-                        )}
-                      </td>
-                      <td className="px-4 py-3 text-center">
-                        {hasExcel ? (
-                          <a
-                            href={`${backendUrl}/admin/payslip/pdf/${p.worker}/${p.year}/${p.month}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inline-flex items-center gap-1 rounded-md px-3 py-1 text-xs font-medium transition-colors"
-                            style={{
-                              background: "var(--color-surface-alt)",
-                              color: "var(--color-foreground)",
-                            }}
-                          >
-                            <Download size={14} />
-                            XLS
                           </a>
                         ) : (
                           <span style={{ color: "var(--color-muted-light)" }}>-</span>

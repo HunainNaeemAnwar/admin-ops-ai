@@ -5,7 +5,6 @@ import Link from "next/link"
 import { fetchApi } from "@/lib/api"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Avatar } from "@/components/ui/avatar"
-import { Breadcrumbs } from "@/components/ui/breadcrumbs"
 import { Search, ChevronRight } from "lucide-react"
 
 export default function WorkersListPage() {
@@ -63,8 +62,6 @@ export default function WorkersListPage() {
 
   return (
     <div className="space-y-4">
-      <Breadcrumbs />
-
       <h1 className="text-xl font-bold sm:text-2xl" style={{ color: "var(--color-foreground)" }}>
         Workers
       </h1>

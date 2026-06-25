@@ -40,7 +40,8 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
             {this.state.error?.message}
           </p>
           <button
-            className="rounded-md bg-brand-green px-4 py-2 text-sm font-medium text-white hover:opacity-90 transition-opacity"
+            className="rounded-md px-4 py-2 text-sm font-medium text-white transition-opacity"
+            style={{ background: "var(--color-success)" }}
             onClick={() => this.setState({ hasError: false, error: null })}
           >
             Try again
@@ -66,7 +67,8 @@ export function FallbackError({
       </p>
       {onRetry && (
         <button
-          className="rounded-md bg-brand-green px-4 py-2 text-sm font-medium text-white hover:opacity-90 transition-opacity"
+          className="rounded-md px-4 py-2 text-sm font-medium text-white transition-opacity"
+          style={{ background: "var(--color-success)" }}
           onClick={onRetry}
         >
           Retry

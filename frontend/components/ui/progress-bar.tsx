@@ -11,14 +11,14 @@ export function ProgressBar({ value, max = 100, className = "", showLabel = fals
   return (
     <div className={className}>
       {showLabel && (
-        <div className="mb-1 flex items-center justify-between text-xs text-muted">
-          <span>{pct}%</span>
+        <div className="mb-1.5 flex items-center justify-between text-xs font-semibold" style={{ color: "var(--color-muted)" }}>
+          <span>{pct}% complete</span>
         </div>
       )}
-      <div className="h-2 w-full overflow-hidden rounded-full bg-surface-alt">
+      <div className="h-2.5 w-full overflow-hidden rounded-full" style={{ background: "var(--color-surface-alt)" }}>
         <div
-          className="h-full rounded-full bg-brand-green transition-all duration-500 ease-out"
-          style={{ width: `${pct}%` }}
+          className="h-full rounded-full transition-all duration-700 ease-out"
+          style={{ width: `${pct}%`, background: "var(--color-primary)" }}
           role="progressbar"
           aria-valuenow={value}
           aria-valuemin={0}

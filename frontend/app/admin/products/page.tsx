@@ -5,7 +5,6 @@ import { fetchApi } from "@/lib/api"
 import type { Product } from "@/lib/types"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Card } from "@/components/ui/card"
-import { Breadcrumbs } from "@/components/ui/breadcrumbs"
 import { Package } from "lucide-react"
 
 export default function ProductsPage() {
@@ -57,8 +56,6 @@ export default function ProductsPage() {
 
   return (
     <div className="space-y-4">
-      <Breadcrumbs />
-
       <h1 className="text-xl font-bold sm:text-2xl" style={{ color: "var(--color-foreground)" }}>
         Products
       </h1>

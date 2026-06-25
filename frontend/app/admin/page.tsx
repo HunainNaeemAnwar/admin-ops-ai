@@ -4,20 +4,23 @@ import { useEffect, useState, useCallback } from "react"
 import { fetchApi } from "@/lib/api"
 import type { DailyReport } from "@/lib/types"
 import { Skeleton } from "@/components/ui/skeleton"
-import { Card } from "@/components/ui/card"
-import { Badge } from "@/components/ui/badge"
-import { ProgressBar } from "@/components/ui/progress-bar"
-import { AlertBanner } from "@/components/alert-banner"
-import { Breadcrumbs } from "@/components/ui/breadcrumbs"
-import { Users, Package, TrendingUp } from "lucide-react"
+import { useTheme } from "@/lib/theme-context"
+import { Users, Package, AlertTriangle } from "lucide-react"
 
 const WORKERS = ["Naeem", "Kaleem", "Akbar", "Suny", "Sajjad", "Irfan", "Kashif", "Gulmast"]
 
-function getDaysInMonth(year: number, month: number) {
-  return new Date(year, month, 0).getDate()
+const productAccents: Record<string, { light: string; dark: string }> = {
+  NUT:      { light: "#2563EB", dark: "#60AFAA" },
+  "10*20":  { light: "#D97706", dark: "#FBBF24" },
+  "6*25":   { light: "#059669", dark: "#34D399" },
+  "6*30":   { light: "#7C3AED", dark: "#A78BFA" },
+  "10*25":  { light: "#DC2626", dark: "#F87171" },
 }
 
 export default function AdminOverviewPage() {
+  const { theme } = useTheme()
+  const dark = theme === "dark"
+
   const [data, setData] = useState<DailyReport | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -39,14 +42,30 @@ export default function AdminOverviewPage() {
     fetchData()
   }, [fetchData])
 
+  // Theme tokens
+  const bg = dark ? "#111318" : "#F3F4F6"
+  const card = dark ? "#181B22" : "#FFFFFF"
+  const border = dark ? "#262A33" : "#E5E7EB"
+  const text = dark ? "#E8EAED" : "#111827"
+  const muted = dark ? "#6B7280" : "#9CA3AF"
+  const statBg = dark ? "#181B22" : "#FFFFFF"
+  const dangerBg = dark ? "#1C1517" : "#FEF2F2"
+  const dangerBorder = dark ? "#3B2024" : "#FECACA"
+  const dangerTag = dark ? "#2A1A1C" : "#FEE2E2"
+  const dangerTagText = dark ? "#FCA5A5" : "#DC2626"
+  const emptyBorder = dark ? "#262A33" : "#D1D5DB"
+  const emptyIcon = dark ? "#374151" : "#D1D5DB"
+  const missingTagBg = dark ? "#2A1A1C" : "#FEF2F2"
+  const missingTagText = dark ? "#FCA5A5" : "#DC2626"
+
   if (loading) {
     return (
-      <div className="space-y-4">
+      <div style={{ background: bg, minHeight: "100vh", borderRadius: "12px", padding: "16px" }} className="space-y-4">
         <Skeleton className="h-8 w-48" />
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          <Skeleton className="h-24" />
-          <Skeleton className="h-24" />
-          <Skeleton className="h-24" />
+        <div className="grid grid-cols-3 gap-3">
+          <Skeleton className="h-20" />
+          <Skeleton className="h-20" />
+          <Skeleton className="h-20" />
         </div>
         <Skeleton className="h-48 w-full" />
       </div>
@@ -55,10 +74,11 @@ export default function AdminOverviewPage() {
 
   if (error) {
     return (
-      <div className="flex flex-col items-center gap-4 py-12">
-        <p style={{ color: "var(--color-destructive)" }}>{error}</p>
+      <div style={{ background: bg, minHeight: "80vh" }} className="flex flex-col items-center justify-center gap-4">
+        <p className="text-sm" style={{ color: "#DC2626" }}>{error}</p>
         <button
-          className="rounded-md bg-brand-green px-4 py-2 text-sm font-medium text-white hover:opacity-90 transition-opacity"
+          className="rounded-lg px-5 py-2.5 text-sm font-semibold transition-opacity hover:opacity-90"
+          style={{ background: "#2563EB", color: "#FFF" }}
           onClick={fetchData}
         >
           Retry
@@ -74,113 +94,100 @@ export default function AdminOverviewPage() {
     (w) => !data?.entries.some((e) => e.worker_name === w)
   )
 
-  const now = new Date()
-  const daysInMonth = getDaysInMonth(now.getFullYear(), now.getMonth() + 1)
-  const monthProgress = Math.round((now.getDate() / daysInMonth) * 100)
-
   const products = Object.entries(data?.totals || {})
 
   return (
-    <div className="space-y-4">
-      <Breadcrumbs />
+    <div style={{ background: bg, minHeight: "100vh", borderRadius: "12px", padding: "16px" }} className="space-y-5">
 
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-bold sm:text-2xl" style={{ color: "var(--color-foreground)" }}>
-          Overview
-        </h1>
-        <Badge variant="info">{data?.date}</Badge>
+      {/* Header */}
+      <div className="flex items-end justify-between">
+        <h1 className="text-xl font-bold" style={{ color: text }}>Dashboard</h1>
+        <span className="text-xs tabular-nums" style={{ color: muted }}>{data?.date}</span>
       </div>
 
-      {missingWorkers.length > 0 && (
-        <AlertBanner
-          message="Data not entered today for:"
-          details={missingWorkers}
-        />
-      )}
-
-      <div className="mb-2">
-        <div className="flex items-center justify-between text-xs" style={{ color: "var(--color-muted)" }}>
-          <span>Month Progress</span>
-          <span>{now.getDate()}/{daysInMonth}</span>
+      {/* Stat Row */}
+      <div className="grid grid-cols-3 gap-3">
+        <div style={{ background: statBg, border: `1px solid ${border}` }} className="rounded-xl px-4 py-3">
+          <div className="flex items-center gap-2 mb-1">
+            <Users size={14} style={{ color: muted }} />
+            <span className="text-[11px] font-medium uppercase tracking-wide" style={{ color: muted }}>Workers</span>
+          </div>
+          <p className="text-2xl font-bold tabular-nums" style={{ color: text }}>
+            {workersPresent}<span className="text-sm font-normal" style={{ color: muted }}>/{WORKERS.length}</span>
+          </p>
         </div>
-        <ProgressBar value={now.getDate()} max={daysInMonth} showLabel />
+
+        <div style={{ background: statBg, border: `1px solid ${border}` }} className="rounded-xl px-4 py-3">
+          <div className="flex items-center gap-2 mb-1">
+            <Package size={14} style={{ color: muted }} />
+            <span className="text-[11px] font-medium uppercase tracking-wide" style={{ color: muted }}>Products</span>
+          </div>
+          <p className="text-2xl font-bold tabular-nums" style={{ color: text }}>{products.length}</p>
+        </div>
+
+        <div style={{ background: statBg, border: `1px solid ${border}` }} className="rounded-xl px-4 py-3">
+          <div className="flex items-center gap-2 mb-1">
+            <AlertTriangle size={14} style={{ color: missingWorkers.length > 0 ? "#DC2626" : muted }} />
+            <span className="text-[11px] font-medium uppercase tracking-wide" style={{ color: muted }}>Missing</span>
+          </div>
+          <p className="text-2xl font-bold tabular-nums" style={{ color: missingWorkers.length > 0 ? "#DC2626" : text }}>
+            {missingWorkers.length}
+          </p>
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        <Card>
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-brand-green/10 text-brand-green">
-              <Users size={20} />
-            </div>
-            <div>
-              <p className="text-xs" style={{ color: "var(--color-muted)" }}>Workers</p>
-              <p className="text-2xl font-bold" style={{ color: "var(--color-foreground)" }}>
-                {workersPresent}
-                <span className="text-sm font-normal" style={{ color: "var(--color-muted)" }}>/{WORKERS.length}</span>
-              </p>
-            </div>
-          </div>
-        </Card>
-
-        <Card>
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-brand-green/10 text-brand-green">
-              <Package size={20} />
-            </div>
-            <div>
-              <p className="text-xs" style={{ color: "var(--color-muted)" }}>Total Pieces</p>
-              <p className="text-2xl font-bold" style={{ color: "var(--color-foreground)" }}>
-                {data?.total_pieces ?? 0}
-              </p>
-            </div>
-          </div>
-        </Card>
-
-        <Card>
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-brand-green/10 text-brand-green">
-              <TrendingUp size={20} />
-            </div>
-            <div>
-              <p className="text-xs" style={{ color: "var(--color-muted)" }}>Products</p>
-              <p className="text-2xl font-bold" style={{ color: "var(--color-foreground)" }}>
-                {products.length}
-              </p>
-            </div>
-          </div>
-        </Card>
-      </div>
-
+      {/* Product Grid */}
       {products.length > 0 && (
-        <Card title="Per-Product Breakdown">
-          <div className="space-y-3">
+        <div>
+          <h2 className="text-xs font-semibold uppercase tracking-wider mb-3" style={{ color: muted }}>
+            Today&apos;s Production
+          </h2>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
             {products.map(([product, qty]) => {
-              const maxQty = Math.max(...products.map(([, q]) => q as number), 1)
-              const pct = Math.round(((qty as number) / maxQty) * 100)
+              const accent = productAccents[product]?.[dark ? "dark" : "light"] || muted
               return (
-                <div key={product} className="space-y-1">
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="font-medium" style={{ color: "var(--color-foreground)" }}>{product}</span>
-                    <span className="font-mono font-semibold" style={{ color: "var(--color-foreground)" }}>
-                      {(qty as number).toLocaleString()}
-                    </span>
-                  </div>
-                  <div className="h-2 w-full overflow-hidden rounded-full" style={{ background: "var(--color-surface-alt)" }}>
-                    <div
-                      className="h-full rounded-full bg-brand-green transition-all duration-700 ease-out"
-                      style={{ width: `${pct}%` }}
-                    />
-                  </div>
+                <div
+                  key={product}
+                  className="rounded-xl px-4 py-3"
+                  style={{ background: card, border: `1px solid ${border}` }}
+                >
+                  <p className="text-[11px] font-medium mb-1" style={{ color: muted }}>{product}</p>
+                  <p className="text-xl font-bold tabular-nums" style={{ color: accent }}>
+                    {(qty as number).toLocaleString()}
+                  </p>
                 </div>
               )
             })}
           </div>
-        </Card>
+        </div>
       )}
 
+      {/* Missing Workers */}
+      {missingWorkers.length > 0 && (
+        <div
+          className="rounded-xl px-4 py-3"
+          style={{ background: dangerBg, border: `1px solid ${dangerBorder}` }}
+        >
+          <p className="text-xs font-semibold mb-2" style={{ color: "#DC2626" }}>Missing today</p>
+          <div className="flex flex-wrap gap-1.5">
+            {missingWorkers.map((w) => (
+              <span
+                key={w}
+                className="rounded-md px-2.5 py-1 text-xs font-medium"
+                style={{ background: missingTagBg, color: missingTagText }}
+              >
+                {w}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Empty */}
       {!data || data.entries.length === 0 ? (
-        <div className="py-8 text-center text-sm" style={{ color: "var(--color-muted)" }}>
-          No production data for today.
+        <div className="rounded-xl py-12 text-center" style={{ border: `1px dashed ${emptyBorder}` }}>
+          <Package size={32} className="mx-auto mb-2" style={{ color: emptyIcon }} />
+          <p className="text-sm" style={{ color: muted }}>No production data for today.</p>
         </div>
       ) : null}
     </div>

@@ -15,10 +15,10 @@ const icons = {
   info: Info,
 }
 
-const colors = {
-  success: "bg-toast-success text-white",
-  error: "bg-toast-error text-white",
-  info: "bg-toast-info text-white",
+const bgColors: Record<string, React.CSSProperties> = {
+  success: { background: "var(--color-toast-success)" },
+  error: { background: "var(--color-toast-error)" },
+  info: { background: "var(--color-toast-info)" },
 }
 
 export function Toast({ message, type, onDismiss }: ToastProps) {
@@ -39,9 +39,12 @@ export function Toast({ message, type, onDismiss }: ToastProps) {
     <div
       role="alert"
       aria-live="polite"
-      className={`flex items-center gap-3 rounded-lg px-4 py-3 text-sm font-medium shadow-lg transition-all duration-300 ${colors[type]} ${
-        visible ? "translate-x-0 opacity-100" : "translate-x-4 opacity-0"
-      }`}
+      className="flex items-center gap-3 rounded-xl px-4 py-3 text-sm font-semibold text-white shadow-lg transition-all duration-300"
+      style={{
+        ...bgColors[type],
+        transform: visible ? "translateX(0)" : "translateX(16px)",
+        opacity: visible ? 1 : 0,
+      }}
     >
       <Icon size={18} className="shrink-0" />
       <span className="flex-1">{message}</span>
@@ -50,7 +53,7 @@ export function Toast({ message, type, onDismiss }: ToastProps) {
           setVisible(false)
           setTimeout(onDismiss, 300)
         }}
-        className="shrink-0 rounded p-0.5 opacity-70 transition-opacity hover:opacity-100"
+        className="shrink-0 rounded-lg p-1 opacity-70 transition-opacity hover:opacity-100"
         aria-label="Dismiss"
       >
         <X size={14} />

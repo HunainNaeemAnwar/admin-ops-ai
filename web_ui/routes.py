@@ -309,6 +309,7 @@ async def oauth_callback(
     resp.set_cookie(
         key="auth",
         value=encrypted,
+        max_age=259200,
         httponly=True,
         secure=False,
         samesite="lax",
@@ -396,6 +397,25 @@ async def admin_monthly_report(
             worker_totals[code] = worker_totals.get(code, 0) + e["quantity"]
         worker_data.append(MonthlyWorkerSummary(worker=w["name"], totals=worker_totals))
     return MonthlyReport(year=y, month=m, workers=worker_data)
+
+
+@admin_router.get("/monthly/excel")
+async def admin_monthly_excel(
+    user: CurrentUser,
+    year: Annotated[Optional[int], Query()] = None,
+    month: Annotated[Optional[int], Query()] = None,
+) -> FileResponse:
+    require_auth(user)
+    from tools.export_tools import generate_excel_report
+    today = date.today()
+    y = year or today.year
+    m = month or today.month
+    filepath = generate_excel_report(period="monthly", year=y, month=m)
+    return FileResponse(
+        filepath,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        filename=f"report_monthly_{y}-{m:02d}.xlsx",
+    )
 
 
 @admin_router.get("/workers")

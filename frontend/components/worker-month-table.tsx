@@ -54,7 +54,8 @@ export function WorkerMonthTable({ workerName, year, month, products, refreshKey
       <div className="flex flex-col items-center gap-4 py-8">
         <p style={{ color: "var(--color-destructive)" }}>{error}</p>
         <button
-          className="rounded-md bg-brand-green px-4 py-2 text-sm font-medium text-white hover:opacity-90 transition-opacity"
+          className="rounded-md px-4 py-2 text-sm font-medium text-white transition-opacity"
+          style={{ background: "var(--color-success)" }}
           onClick={fetchData}
         >
           Retry
@@ -116,17 +117,16 @@ export function WorkerMonthTable({ workerName, year, month, products, refreshKey
                 style={{
                   borderBottom: "1px solid var(--color-border)",
                   background: isToday
-                    ? "var(--color-accent) / 0.1)"
+                    ? "rgba(37, 99, 235, 0.05)"
                     : i % 2 === 0 ? "var(--color-surface)" : "var(--color-table-stripe)",
                 }}
-                className="transition-colors hover:bg-surface-alt"
               >
                 <td
                   className="sticky left-0 z-10 whitespace-nowrap px-3 py-2.5 text-xs font-medium"
                   style={{
                     color: "var(--color-foreground)",
                     background: isToday
-                      ? "rgba(5, 150, 105, 0.05)"
+                      ? "rgba(37, 99, 235, 0.05)"
                       : i % 2 === 0 ? "var(--color-surface)" : "var(--color-table-stripe)",
                   }}
                 >
@@ -145,7 +145,7 @@ export function WorkerMonthTable({ workerName, year, month, products, refreshKey
                         <span
                           className="inline-block rounded px-1.5 py-0.5 text-xs font-medium"
                           style={{
-                            background: "var(--color-destructive) / 0.1)",
+                            background: "rgba(220, 38, 38, 0.1)",
                             color: "var(--color-destructive)",
                           }}
                         >

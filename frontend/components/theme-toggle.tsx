@@ -9,7 +9,10 @@ export function ThemeToggle({ className = "" }: { className?: string }) {
   return (
     <button
       onClick={toggle}
-      className={`inline-flex items-center justify-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors hover:bg-surface-alt ${className}`}
+      className={`inline-flex items-center justify-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors ${className}`}
+      style={{ color: "var(--color-muted)" }}
+      onMouseEnter={(e) => e.currentTarget.style.background = "var(--color-surface-alt)"}
+      onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
       aria-label={theme === "light" ? "Switch to dark mode" : "Switch to light mode"}
     >
       {theme === "light" ? <Moon size={16} /> : <Sun size={16} />}

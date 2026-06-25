@@ -4,15 +4,17 @@ interface CardProps {
   title?: string
   children: ReactNode
   className?: string
+  hover?: boolean
 }
 
-export function Card({ title, children, className = "" }: CardProps) {
+export function Card({ title, children, className = "", hover = false }: CardProps) {
   return (
     <div
-      className={`rounded-lg border p-4 sm:p-6 shadow-sm sm:shadow-md ${className}`}
+      className={`rounded-xl border p-4 sm:p-6 ${hover ? "card-hover" : ""} ${className}`}
       style={{
         background: "var(--color-surface)",
         borderColor: "var(--color-border)",
+        boxShadow: "var(--shadow-card)",
       }}
     >
       {title && (

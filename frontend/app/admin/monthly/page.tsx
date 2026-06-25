@@ -6,7 +6,6 @@ import type { MonthlyReport } from "@/lib/types"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Card } from "@/components/ui/card"
 import { Select } from "@/components/ui/select"
-import { Breadcrumbs } from "@/components/ui/breadcrumbs"
 import { Avatar } from "@/components/ui/avatar"
 import { Download, ChevronLeft, ChevronRight } from "lucide-react"
 
@@ -69,7 +68,7 @@ export default function MonthlyReportPage() {
       <div className="flex flex-col items-center gap-4 py-12">
         <p style={{ color: "var(--color-destructive)" }}>{error}</p>
         <button
-          className="rounded-md bg-brand-green px-4 py-2 text-sm font-medium text-white hover:opacity-90 transition-opacity"
+          className="rounded-lg bg-brand-blue px-5 py-2.5 text-sm font-semibold text-white hover:bg-blue-800 transition-colors shadow-sm"
           onClick={fetchData}
         >
           Retry
@@ -89,66 +88,71 @@ export default function MonthlyReportPage() {
   }, {} as Record<string, number>)
 
   return (
-    <div className="space-y-4">
-      <Breadcrumbs />
-
+    <div className="space-y-5">
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-bold sm:text-2xl" style={{ color: "var(--color-foreground)" }}>
           Monthly Report
         </h1>
       </div>
 
-      <div className="flex flex-wrap items-end gap-3">
-        <button
-          onClick={prevMonth}
-          className="rounded-md border p-2 transition-colors hover:bg-surface-alt"
-          style={{ borderColor: "var(--color-border)", color: "var(--color-muted)" }}
-          aria-label="Previous month"
-        >
-          <ChevronLeft size={18} />
-        </button>
-        <Select
-          label="Month"
-          options={MONTHS.map((m, i) => ({ value: String(i + 1), label: m }))}
-          value={String(month)}
-          onChange={(e) => setMonth(Number(e.target.value))}
-        />
-        <div className="flex flex-col gap-1">
-          <label className="text-xs font-medium" style={{ color: "var(--color-muted)" }}>Year</label>
-          <input
-            type="number"
-            value={year}
-            onChange={(e) => setYear(Number(e.target.value))}
-            className="rounded-md border px-3 py-2 text-sm"
-            style={{
-              borderColor: "var(--color-border)",
-              background: "var(--color-surface)",
-              color: "var(--color-foreground)",
-            }}
-          />
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+        <div className="flex items-end gap-2">
+          <button
+            onClick={prevMonth}
+            className="shrink-0 rounded-lg border-2 p-2.5 transition-colors"
+            style={{ borderColor: "var(--color-border)", color: "var(--color-muted)" }}
+            aria-label="Previous month"
+          >
+            <ChevronLeft size={18} />
+          </button>
+          <div className="flex-1 sm:w-auto">
+            <Select
+              label="Month"
+              options={MONTHS.map((m, i) => ({ value: String(i + 1), label: m }))}
+              value={String(month)}
+              onChange={(e) => setMonth(Number(e.target.value))}
+            />
+          </div>
+          <div className="flex flex-col gap-1.5 flex-1 sm:w-auto">
+            <label className="text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--color-muted)" }}>Year</label>
+            <input
+              type="number"
+              value={year}
+              onChange={(e) => setYear(Number(e.target.value))}
+              className="w-full rounded-lg border-2 px-3 py-2.5 text-sm font-medium transition-colors focus:outline-none"
+              style={{
+                borderColor: "var(--color-border)",
+                background: "var(--color-surface)",
+                color: "var(--color-foreground)",
+              }}
+            />
+          </div>
+          <button
+            onClick={nextMonth}
+            className="shrink-0 rounded-lg border-2 p-2.5 transition-colors"
+            style={{ borderColor: "var(--color-border)", color: "var(--color-muted)" }}
+            aria-label="Next month"
+          >
+            <ChevronRight size={18} />
+          </button>
         </div>
-        <button
-          onClick={nextMonth}
-          className="rounded-md border p-2 transition-colors hover:bg-surface-alt"
-          style={{ borderColor: "var(--color-border)", color: "var(--color-muted)" }}
-          aria-label="Next month"
-        >
-          <ChevronRight size={18} />
-        </button>
         <a
-          href={`${process.env.NEXT_PUBLIC_BACKEND_URL || ""}/api/worker/Naeem/excel/${year}/${month}`}
+          href={`${process.env.NEXT_PUBLIC_BACKEND_URL || ""}/admin/monthly/excel?year=${year}&month=${month}`}
           target="_blank"
           rel="noopener noreferrer"
-          className="inline-flex items-center gap-2 rounded-md bg-brand-green px-4 py-2 text-sm font-medium text-white hover:opacity-90 transition-opacity"
+          className="inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold transition-colors"
+          style={{ background: "var(--color-success)", color: "#FFFFFF" }}
         >
           <Download size={16} />
-          Excel
+          Download Excel
         </a>
       </div>
 
       {!data || data.workers.length === 0 ? (
-        <div className="py-8 text-center text-sm" style={{ color: "var(--color-muted)" }}>
-          No data for this period.
+        <div className="rounded-xl border-2 border-dashed py-12 text-center" style={{ borderColor: "var(--color-border)" }}>
+          <p className="text-sm font-medium" style={{ color: "var(--color-muted)" }}>
+            No data for this period.
+          </p>
         </div>
       ) : (
         <Card>
@@ -157,7 +161,7 @@ export default function MonthlyReportPage() {
               <thead>
                 <tr style={{ borderBottom: "2px solid var(--color-border)" }}>
                   <th
-                    className="sticky left-0 z-10 px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wider"
+                    className="sticky left-0 z-10 px-4 py-3 text-left text-xs font-bold uppercase tracking-wider"
                     style={{ color: "var(--color-muted)", background: "var(--color-surface)" }}
                   >
                     Worker
@@ -165,7 +169,7 @@ export default function MonthlyReportPage() {
                   {productCodes.map((code) => (
                     <th
                       key={code}
-                      className="whitespace-nowrap px-3 py-2.5 text-right text-xs font-semibold uppercase tracking-wider"
+                      className="whitespace-nowrap px-4 py-3 text-right text-xs font-bold uppercase tracking-wider"
                       style={{ color: "var(--color-muted)" }}
                     >
                       {code}
@@ -175,16 +179,16 @@ export default function MonthlyReportPage() {
               </thead>
               <tbody>
                 {data.workers.map((w, i) => (
-                  <tr
-                    key={w.worker}
-                    style={{
-                      borderBottom: "1px solid var(--color-border)",
-                      background: i % 2 === 0 ? "var(--color-surface)" : "var(--color-table-stripe)",
-                    }}
-                    className="transition-colors hover:bg-surface-alt"
-                  >
+                    <tr
+                      key={w.worker}
+                      style={{
+                        borderBottom: "1px solid var(--color-border)",
+                        background: i % 2 === 0 ? "var(--color-surface)" : "var(--color-table-stripe)",
+                      }}
+                      className="transition-colors"
+                    >
                     <td
-                      className="sticky left-0 z-10 flex items-center gap-2 whitespace-nowrap px-3 py-2.5 font-medium"
+                      className="sticky left-0 z-10 flex items-center gap-3 whitespace-nowrap px-4 py-3 font-semibold"
                       style={{ background: i % 2 === 0 ? "var(--color-surface)" : "var(--color-table-stripe)" }}
                     >
                       <Avatar name={w.worker} size="sm" />
@@ -193,7 +197,7 @@ export default function MonthlyReportPage() {
                     {productCodes.map((code) => (
                       <td
                         key={code}
-                        className="whitespace-nowrap px-3 py-2.5 text-right font-mono"
+                        className="whitespace-nowrap px-4 py-3 text-right font-mono font-semibold tabular-nums"
                         style={{ color: "var(--color-foreground)" }}
                       >
                         {w.totals[code] ? w.totals[code].toLocaleString() : (
@@ -205,11 +209,10 @@ export default function MonthlyReportPage() {
                 ))}
                 {/* Grand Total Row */}
                 <tr
-                  className="font-semibold"
                   style={{ borderTop: "2px solid var(--color-border)", background: "var(--color-surface-alt)" }}
                 >
                   <td
-                    className="sticky left-0 z-10 px-3 py-2.5 font-bold"
+                    className="sticky left-0 z-10 px-4 py-3 font-bold"
                     style={{ color: "var(--color-foreground)", background: "var(--color-surface-alt)" }}
                   >
                     Total
@@ -217,8 +220,8 @@ export default function MonthlyReportPage() {
                   {productCodes.map((code) => (
                     <td
                       key={code}
-                      className="whitespace-nowrap px-3 py-2.5 text-right font-mono font-bold"
-                      style={{ color: "var(--color-accent)" }}
+                      className="whitespace-nowrap px-4 py-3 text-right font-mono text-sm font-bold tabular-nums"
+                      style={{ color: "var(--color-primary)" }}
                     >
                       {grandTotals[code].toLocaleString()}
                     </td>

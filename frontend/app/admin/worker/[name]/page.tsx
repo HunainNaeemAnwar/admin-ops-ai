@@ -6,7 +6,6 @@ import { Select } from "@/components/ui/select"
 import { fetchApi } from "@/lib/api"
 import type { Product } from "@/lib/types"
 import { useEffect, useCallback } from "react"
-import { Breadcrumbs } from "@/components/ui/breadcrumbs"
 import { Avatar } from "@/components/ui/avatar"
 import { Download, ChevronLeft, ChevronRight, ArrowLeft } from "lucide-react"
 import Link from "next/link"
@@ -56,8 +55,6 @@ export default function WorkerDetailPage({
 
   return (
     <div className="space-y-4">
-      <Breadcrumbs />
-
       <div className="flex items-center gap-3">
         <Link
           href="/admin/workers"
@@ -72,48 +69,53 @@ export default function WorkerDetailPage({
         </h1>
       </div>
 
-      <div className="flex flex-wrap items-center gap-3">
-        <button
-          onClick={prevMonth}
-          className="rounded-md border p-2 transition-colors hover:bg-surface-alt"
-          style={{ borderColor: "var(--color-border)", color: "var(--color-muted)" }}
-          aria-label="Previous month"
-        >
-          <ChevronLeft size={18} />
-        </button>
-        <Select
-          label="Month"
-          options={MONTHS.map((m, i) => ({ value: String(i + 1), label: m }))}
-          value={String(month)}
-          onChange={(e) => setMonth(Number(e.target.value))}
-        />
-        <div className="flex flex-col gap-1">
-          <label className="text-xs font-medium" style={{ color: "var(--color-muted)" }}>Year</label>
-          <input
-            type="number"
-            value={year}
-            onChange={(e) => setYear(Number(e.target.value))}
-            className="rounded-md border px-3 py-2 text-sm"
-            style={{
-              borderColor: "var(--color-border)",
-              background: "var(--color-surface)",
-              color: "var(--color-foreground)",
-            }}
-          />
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+        <div className="flex items-end gap-2">
+          <button
+            onClick={prevMonth}
+            className="shrink-0 rounded-lg border-2 p-2.5 transition-colors"
+            style={{ borderColor: "var(--color-border)", color: "var(--color-muted)" }}
+            aria-label="Previous month"
+          >
+            <ChevronLeft size={18} />
+          </button>
+          <div className="flex-1 sm:w-auto">
+            <Select
+              label="Month"
+              options={MONTHS.map((m, i) => ({ value: String(i + 1), label: m }))}
+              value={String(month)}
+              onChange={(e) => setMonth(Number(e.target.value))}
+            />
+          </div>
+          <div className="flex flex-col gap-1.5 flex-1 sm:w-auto">
+            <label className="text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--color-muted)" }}>Year</label>
+            <input
+              type="number"
+              value={year}
+              onChange={(e) => setYear(Number(e.target.value))}
+              className="w-full rounded-lg border-2 px-3 py-2.5 text-sm font-medium transition-colors focus:outline-none"
+              style={{
+                borderColor: "var(--color-border)",
+                background: "var(--color-surface)",
+                color: "var(--color-foreground)",
+              }}
+            />
+          </div>
+          <button
+            onClick={nextMonth}
+            className="shrink-0 rounded-lg border-2 p-2.5 transition-colors"
+            style={{ borderColor: "var(--color-border)", color: "var(--color-muted)" }}
+            aria-label="Next month"
+          >
+            <ChevronRight size={18} />
+          </button>
         </div>
-        <button
-          onClick={nextMonth}
-          className="rounded-md border p-2 transition-colors hover:bg-surface-alt"
-          style={{ borderColor: "var(--color-border)", color: "var(--color-muted)" }}
-          aria-label="Next month"
-        >
-          <ChevronRight size={18} />
-        </button>
         <a
           href={`${process.env.NEXT_PUBLIC_BACKEND_URL || ""}/api/worker/${encodeURIComponent(workerName)}/excel/${year}/${month}`}
           target="_blank"
           rel="noopener noreferrer"
-          className="inline-flex items-center gap-2 rounded-md bg-brand-green px-4 py-2 text-sm font-medium text-white hover:opacity-90 transition-opacity"
+          className="inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold transition-colors"
+          style={{ background: "var(--color-success)", color: "#FFFFFF" }}
         >
           <Download size={16} />
           Excel

@@ -6,7 +6,6 @@ import type { DailyReport } from "@/lib/types"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Card } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { Breadcrumbs } from "@/components/ui/breadcrumbs"
 import { Avatar } from "@/components/ui/avatar"
 import { Calendar } from "lucide-react"
 
@@ -60,7 +59,7 @@ export default function DailyReportPage() {
       <div className="flex flex-col items-center gap-4 py-12">
         <p style={{ color: "var(--color-destructive)" }}>{error}</p>
         <button
-          className="rounded-md bg-brand-green px-4 py-2 text-sm font-medium text-white hover:opacity-90 transition-opacity"
+          className="rounded-lg bg-brand-blue px-5 py-2.5 text-sm font-semibold text-white hover:bg-blue-800 transition-colors shadow-sm"
           onClick={fetchData}
         >
           Retry
@@ -80,25 +79,23 @@ export default function DailyReportPage() {
   }
 
   return (
-    <div className="space-y-4">
-      <Breadcrumbs />
-
+    <div className="space-y-5">
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-bold sm:text-2xl" style={{ color: "var(--color-foreground)" }}>
           Daily Report
         </h1>
       </div>
 
-      <div className="flex flex-wrap items-end gap-3">
-        <div className="flex flex-col gap-1">
-          <label className="text-xs font-medium" style={{ color: "var(--color-muted)" }}>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+        <div className="flex-1 flex flex-col gap-1.5">
+          <label className="text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--color-muted)" }}>
             Date
           </label>
           <input
             type="date"
             value={dateStr}
             onChange={(e) => setDateStr(e.target.value)}
-            className="rounded-md border px-3 py-2 text-sm"
+            className="w-full rounded-lg border-2 px-3 py-2.5 text-sm font-medium transition-colors focus:outline-none"
             style={{
               borderColor: "var(--color-border)",
               background: "var(--color-surface)",
@@ -108,23 +105,25 @@ export default function DailyReportPage() {
         </div>
         <button
           onClick={goToToday}
-          className="inline-flex items-center gap-2 rounded-md border px-3 py-2 text-sm font-medium transition-colors hover:bg-surface-alt"
+          className="inline-flex items-center justify-center gap-2 rounded-lg border-2 px-4 py-2.5 text-sm font-semibold transition-colors"
           style={{ borderColor: "var(--color-border)", color: "var(--color-muted)" }}
         >
-          <Calendar size={14} />
+          <Calendar size={16} />
           Today
         </button>
       </div>
 
       {!data || data.entries.length === 0 ? (
-        <div className="py-8 text-center text-sm" style={{ color: "var(--color-muted)" }}>
-          No data for this date.
+        <div className="rounded-xl border-2 border-dashed py-12 text-center" style={{ borderColor: "var(--color-border)" }}>
+          <Calendar size={40} className="mx-auto mb-3" style={{ color: "var(--color-muted-light)" }} />
+          <p className="text-sm font-medium" style={{ color: "var(--color-muted)" }}>
+            No data for this date.
+          </p>
         </div>
       ) : (
         <>
           <div className="flex items-center gap-2">
             <Badge variant="info">Workers: {workers.length}</Badge>
-            <Badge>{data.total_pieces.toLocaleString()} pieces</Badge>
           </div>
 
           <Card>
@@ -133,7 +132,7 @@ export default function DailyReportPage() {
                 <thead>
                   <tr style={{ borderBottom: "2px solid var(--color-border)" }}>
                     <th
-                      className="sticky left-0 z-10 px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wider"
+                      className="sticky left-0 z-10 px-4 py-3 text-left text-xs font-bold uppercase tracking-wider"
                       style={{ color: "var(--color-muted)", background: "var(--color-surface)" }}
                     >
                       Worker
@@ -141,7 +140,7 @@ export default function DailyReportPage() {
                     {products.map((p) => (
                       <th
                         key={p}
-                        className="whitespace-nowrap px-3 py-2.5 text-right text-xs font-semibold uppercase tracking-wider"
+                        className="whitespace-nowrap px-4 py-3 text-right text-xs font-bold uppercase tracking-wider"
                         style={{ color: "var(--color-muted)" }}
                       >
                         {p}
@@ -157,10 +156,10 @@ export default function DailyReportPage() {
                         borderBottom: "1px solid var(--color-border)",
                         background: i % 2 === 0 ? "var(--color-surface)" : "var(--color-table-stripe)",
                       }}
-                      className="transition-colors hover:bg-surface-alt"
+                      className="transition-colors"
                     >
                       <td
-                        className="sticky left-0 z-10 flex items-center gap-2 whitespace-nowrap px-3 py-2.5 font-medium"
+                        className="sticky left-0 z-10 flex items-center gap-3 whitespace-nowrap px-4 py-3 font-semibold"
                         style={{ background: i % 2 === 0 ? "var(--color-surface)" : "var(--color-table-stripe)" }}
                       >
                         <Avatar name={worker} size="sm" />
@@ -171,7 +170,7 @@ export default function DailyReportPage() {
                         return (
                           <td
                             key={p}
-                            className="whitespace-nowrap px-3 py-2.5 text-right font-mono"
+                            className="whitespace-nowrap px-4 py-3 text-right font-mono font-semibold tabular-nums"
                             style={{ color: "var(--color-foreground)" }}
                           >
                             {qty !== null ? qty.toLocaleString() : (

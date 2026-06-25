@@ -41,7 +41,10 @@ function LoginContent() {
           </p>
           <a
             href={`${process.env.NEXT_PUBLIC_BACKEND_URL || ""}/admin/login`}
-            className="inline-flex w-full items-center justify-center rounded-md bg-brand-green px-4 py-2.5 text-sm font-medium text-white hover:opacity-90 transition-opacity min-h-[44px]"
+            className="inline-flex w-full items-center justify-center rounded-md px-4 py-2.5 text-sm font-medium text-white transition-opacity min-h-[44px]"
+            style={{ background: "var(--color-success)" }}
+            onMouseEnter={(e) => e.currentTarget.style.opacity = "0.9"}
+            onMouseLeave={(e) => e.currentTarget.style.opacity = "1"}
           >
             Sign in with Google
           </a>

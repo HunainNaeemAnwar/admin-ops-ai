@@ -95,10 +95,11 @@ You double-check numbers before confirming."""
 
 PRODUCTION_RULES = """<rules>
 - Production entry → log_production_tool. Include "date":"YYYY-MM-DD" for past dates (omit for today).
+- "sab" / "sab ny" = all workers (Naeem, Kaleem, Akbar, Suny, Sajjad, Irfan, Kashif, Gulmast). Each worker gets same product and quantity.
 - Multi-row tables → parse_table_tool
 - Worker absent → mark_absent_tool with optional reason (e.g. "Eid", "sick")
+- Some present + some absent → batch_daily_update_tool (entries_json + absent_workers in one call)
 - Edit entry → update_entry_tool. Pass worker, product_code, date_str, entry_id=0 to auto-lookup.
-- Batch production + absent → batch_daily_update_tool
 - Tool warns "already has data" → tell user, ask for confirmation resend
 - Multiple workers absent same date → workers="all"
 - Worker already absent → report to user, don't retry
@@ -208,6 +209,10 @@ User: 22 June ko Naeem ka data?
 (delegate_reporting)
 → ReportingAgent calls get_daily_status_tool(date_str="2026-06-22")
 
+User: aj ka data likha hwa hai
+(delegate_reporting)
+→ ReportingAgent calls get_daily_status_tool() to show today's status
+
 User: kya haal hai?
 Aapka shukriya! Main yahan hoon. Koi production, report, ya payslip ka kaam ho toh bataiye.
 
@@ -222,10 +227,11 @@ Ask politely: "Bhai, kya karna chahte hain? Production, report, ya payslip?"
 def log_production_tool(entries_json: str) -> str:
     """Record single or multiple production entries using extracted JSON.
 
-    Use for 1-5 entries where you can identify worker name, product code, and quantity from natural language.
+    Use for any number of entries where you can identify worker name, product code, and quantity from natural language.
     Example input: "Naeem made 300 NUT and 150 10*20"
     Example JSON: [{"worker":"Naeem","product_code":"NUT","quantity":300},{"worker":"Naeem","product_code":"10*20","quantity":150}]
-    For past dates, include "date":"2026-06-22" in each entry object.
+    For past dates, include "date":"YYYY-MM-DD" in each entry object.
+    "sab" or "sab ny" means all workers from the fixed list.
 
     Do NOT use for pasted tables — use parse_table_tool instead.
 
@@ -338,7 +344,10 @@ def update_entry_tool(entry_id: int = 0, new_quantity: int = 0, reason: Optional
 def batch_daily_update_tool(entries_json: str, absent_workers: Optional[str] = None) -> str:
     """Record production entries AND mark workers absent in a single call.
 
-    Use when user provides both production data and absent workers together.
+    Use when some workers are present (producing) and some are absent (chutti/leave).
+    For example: "sab ny 300 nut bnaye hain, sunny ki chutti hai"
+    → All workers except Suny made 300 NUT, Suny is absent.
+
     For production-only or absent-only, use the individual tools instead.
 
     Args:
@@ -702,7 +711,22 @@ async def chat(user_input: str, session_id: str = "default") -> str:
             msg = str(e)
             if "Messages with role 'tool'" in msg:
                 await memory.delete()
-                return "Memory corrupted — delete kar di. Dobara try karein."
+                try:
+                    result = await asyncio.wait_for(
+                        Runner.run(
+                            agent,
+                            input=user_input,
+                            session=_get_memory(session_id).session,
+                            max_turns=10,
+                            run_config=BASE_RUN_CONFIG,
+                        ),
+                        timeout=30,
+                    )
+                    track_usage(session_id, model_name, user_input, str(result.final_output)[:200])
+                    await _get_memory(session_id).compact_if_needed()
+                    return result.final_output
+                except Exception:
+                    return "Memory corrupted — delete kar di. Dobara try karein."
             is_last = attempt == len(fallback_chain) - 1
             prefix = "⚠️ " if is_last else "⚠️ "
             if "429" in msg:
