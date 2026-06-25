@@ -72,8 +72,8 @@ export function ChatWidget() {
       {/* FAB */}
       {!isOpen && (
         <button onClick={() => setIsOpen(true)} aria-label="Open chat"
-          className="fixed z-50 flex items-center justify-center rounded-full shadow-lg transition-transform active:scale-95 md:bottom-0 md:right-6"
-          style={{ background: primary, color: onPrimary, width: 48, height: 48, bottom: "calc(80px + env(safe-area-inset-bottom, 0px))", right: 16 }}
+          className="fixed z-50 flex items-center justify-center rounded-full shadow-lg transition-transform active:scale-95 bottom-[calc(80px+env(safe-area-inset-bottom,0px))] md:bottom-0 md:right-6"
+          style={{ background: primary, color: onPrimary, width: 48, height: 48, right: 16 }}
         >
           <MessageCircle size={22} />
         </button>
