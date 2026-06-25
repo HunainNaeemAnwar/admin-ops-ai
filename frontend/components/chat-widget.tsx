@@ -72,7 +72,7 @@ export function ChatWidget() {
       {/* FAB */}
       {!isOpen && (
         <button onClick={() => setIsOpen(true)} aria-label="Open chat"
-          className="fixed z-50 flex items-center justify-center rounded-full shadow-lg transition-transform active:scale-95 md:bottom-5 md:right-6"
+          className="fixed z-50 flex items-center justify-center rounded-full shadow-lg transition-transform active:scale-95 md:bottom-2 md:right-6"
           style={{ background: primary, color: onPrimary, width: 48, height: 48, bottom: "calc(80px + env(safe-area-inset-bottom, 0px))", right: 16 }}
         >
           <MessageCircle size={22} />
@@ -125,7 +125,7 @@ export function ChatWidget() {
 
       {/* Desktop: floating panel */}
       {isOpen && (
-        <div className="hidden md:flex fixed z-50 flex-col w-[440px] h-[560px] rounded-xl border shadow-xl"
+        <div className="hidden md:flex fixed z-50 flex-col w-[360px] h-[440px] rounded-xl border shadow-xl"
           style={{ background: bg, borderColor: border, bottom: 16, right: 24 }}
         >
           {/* Header */}
