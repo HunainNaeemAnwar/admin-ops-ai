@@ -86,112 +86,116 @@ export function WorkerMonthTable({ workerName, year, month, products, refreshKey
   const hasAnyData = presentDays.length > 0
 
   return (
-    <div className="swipeable-scroll overflow-x-auto rounded-lg border" style={{ borderColor: "var(--color-border)" }}>
-      <table className="min-w-full text-sm" style={{ borderCollapse: "collapse" }}>
-        <thead>
-          <tr style={{ borderBottom: "2px solid var(--color-border)", background: "var(--color-surface-alt)" }}>
-            <th
-              className="sticky left-0 z-10 whitespace-nowrap px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wider"
-              style={{ color: "var(--color-muted)", background: "var(--color-surface-alt)" }}
-            >
-              Date
-            </th>
-            {productCodes.map((code) => (
+    <div className="rounded-lg border" style={{ borderColor: "var(--color-border)" }}>
+      <div className="swipeable-scroll overflow-x-auto">
+        <table className="w-full text-xs sm:text-sm" style={{ borderCollapse: "collapse" }}>
+          <thead>
+            <tr style={{ borderBottom: "2px solid var(--color-border)", background: "var(--color-surface-alt)" }}>
               <th
-                key={code}
-                className="whitespace-nowrap px-3 py-2.5 text-right text-xs font-semibold uppercase tracking-wider"
-                style={{ color: "var(--color-muted)" }}
+                className="sticky left-0 z-10 whitespace-nowrap px-1.5 py-2 text-left text-[10px] font-semibold uppercase tracking-wider sm:px-3 sm:py-2.5 sm:text-xs"
+                style={{ color: "var(--color-muted)", background: "var(--color-surface-alt)" }}
               >
-                {code}
+                Date
               </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {data.days.map((day, i) => {
-            const isFuture = day.date > todayStr
-            const isToday = day.date === todayStr
-            return (
-              <tr
-                key={day.date}
-                style={{
-                  borderBottom: "1px solid var(--color-border)",
-                  background: isToday
-                    ? "rgba(37, 99, 235, 0.05)"
-                    : i % 2 === 0 ? "var(--color-surface)" : "var(--color-table-stripe)",
-                }}
-              >
-                <td
-                  className="sticky left-0 z-10 whitespace-nowrap px-3 py-2.5 text-xs font-medium"
+              {productCodes.map((code) => (
+                <th
+                  key={code}
+                  className="whitespace-nowrap px-1.5 py-2 text-right text-[10px] font-semibold uppercase tracking-wider sm:px-3 sm:py-2.5 sm:text-xs"
+                  style={{ color: "var(--color-muted)" }}
+                >
+                  {code}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {data.days.map((day, i) => {
+              const isFuture = day.date > todayStr
+              const isToday = day.date === todayStr
+              const shortDate = day.date.slice(5)
+              return (
+                <tr
+                  key={day.date}
                   style={{
-                    color: "var(--color-foreground)",
+                    borderBottom: "1px solid var(--color-border)",
                     background: isToday
                       ? "rgba(37, 99, 235, 0.05)"
                       : i % 2 === 0 ? "var(--color-surface)" : "var(--color-table-stripe)",
                   }}
                 >
-                  {day.date}
-                </td>
-                {productCodes.map((code) => {
-                  if (isFuture) {
-                    return <td key={code} className="whitespace-nowrap px-3 py-2.5" />
-                  }
-                  if (day.status === "absent") {
+                  <td
+                    className="sticky left-0 z-10 whitespace-nowrap px-1.5 py-2 text-[11px] font-medium sm:px-3 sm:py-2.5 sm:text-xs"
+                    style={{
+                      color: "var(--color-foreground)",
+                      background: isToday
+                        ? "rgba(37, 99, 235, 0.05)"
+                        : i % 2 === 0 ? "var(--color-surface)" : "var(--color-table-stripe)",
+                    }}
+                  >
+                    <span className="hidden sm:inline">{day.date}</span>
+                    <span className="sm:hidden">{shortDate}</span>
+                  </td>
+                  {productCodes.map((code) => {
+                    if (isFuture) {
+                      return <td key={code} className="whitespace-nowrap px-1.5 py-2 sm:px-3 sm:py-2.5" />
+                    }
+                    if (day.status === "absent") {
+                      return (
+                        <td
+                          key={code}
+                          className="whitespace-nowrap px-1.5 py-2 text-right sm:px-3 sm:py-2.5"
+                        >
+                          <span
+                            className="inline-block rounded px-1 py-0.5 text-[10px] font-medium sm:text-xs"
+                            style={{
+                              background: "rgba(220, 38, 38, 0.1)",
+                              color: "var(--color-destructive)",
+                            }}
+                          >
+                            ABSENT
+                          </span>
+                        </td>
+                      )
+                    }
                     return (
                       <td
                         key={code}
-                        className="whitespace-nowrap px-3 py-2.5 text-right"
+                        className="whitespace-nowrap px-1.5 py-2 text-right font-mono text-[11px] sm:px-3 sm:py-2.5 sm:text-sm"
+                        style={{ color: "var(--color-foreground)" }}
                       >
-                        <span
-                          className="inline-block rounded px-1.5 py-0.5 text-xs font-medium"
-                          style={{
-                            background: "rgba(220, 38, 38, 0.1)",
-                            color: "var(--color-destructive)",
-                          }}
-                        >
-                          ABSENT
-                        </span>
+                        {day.products[code] ?? (
+                          <span style={{ color: "var(--color-muted-light)" }}>-</span>
+                        )}
                       </td>
                     )
-                  }
-                  return (
-                    <td
-                      key={code}
-                      className="whitespace-nowrap px-3 py-2.5 text-right font-mono text-sm"
-                      style={{ color: "var(--color-foreground)" }}
-                    >
-                      {day.products[code] ?? (
-                        <span style={{ color: "var(--color-muted-light)" }}>-</span>
-                      )}
-                    </td>
-                  )
-                })}
-              </tr>
-            )
-          })}
-        </tbody>
-        {hasAnyData && (
-          <tfoot>
-            <tr style={{ borderTop: "2px solid var(--color-border)", background: "var(--color-surface-alt)" }}>
-              <td
-                className="sticky left-0 z-10 whitespace-nowrap px-3 py-2.5 text-left text-xs font-bold uppercase tracking-wider"
-                style={{ color: "var(--color-foreground)", background: "var(--color-surface-alt)" }}
-              >
-                Total
-              </td>
-              {productCodes.map((code) => (
+                  })}
+                </tr>
+              )
+            })}
+          </tbody>
+          {hasAnyData && (
+            <tfoot>
+              <tr style={{ borderTop: "2px solid var(--color-border)", background: "var(--color-surface-alt)" }}>
                 <td
-                  key={code}
-                  className="whitespace-nowrap px-3 py-2.5 text-right font-mono text-sm font-bold"
-                  style={{ color: "var(--color-accent)" }}
+                  className="sticky left-0 z-10 whitespace-nowrap px-1.5 py-2 text-left text-[10px] font-bold uppercase tracking-wider sm:px-3 sm:py-2.5 sm:text-xs"
+                  style={{ color: "var(--color-foreground)", background: "var(--color-surface-alt)" }}
                 >
-                  {productTotals[code].toLocaleString()}
+                  Total
                 </td>
-              ))}
-            </tr>
-          </tfoot>
-        )}
-      </table>
+                {productCodes.map((code) => (
+                  <td
+                    key={code}
+                    className="whitespace-nowrap px-1.5 py-2 text-right font-mono text-[11px] font-bold sm:px-3 sm:py-2.5 sm:text-sm"
+                    style={{ color: "var(--color-accent)" }}
+                  >
+                    {productTotals[code].toLocaleString()}
+                  </td>
+                ))}
+              </tr>
+            </tfoot>
+          )}
+        </table>
+      </div>
     </div>
   )
 }

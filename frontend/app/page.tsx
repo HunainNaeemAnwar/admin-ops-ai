@@ -94,7 +94,7 @@ export default function HomePage() {
           </div>
         </div>
 
-        <div className="mb-6 flex flex-wrap gap-3">
+        <div className="mb-4 flex flex-col gap-3 sm:mb-6 sm:flex-row sm:flex-wrap sm:items-end">
           <Select
             label="Worker"
             options={workers.map((w) => ({ value: w.name, label: w.name }))}
