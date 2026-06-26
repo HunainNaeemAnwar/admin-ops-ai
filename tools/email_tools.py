@@ -1,6 +1,7 @@
 import base64
 from datetime import date, timedelta
 from email.message import EmailMessage
+from io import BytesIO
 
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
@@ -8,7 +9,7 @@ from googleapiclient.errors import HttpError
 from config import MANAGER_EMAIL
 from tools.oauth_tools import get_valid_credentials, list_authorized_users
 from tools.database import get_daily_totals, get_all_products
-from tools.export_tools import generate_excel_report
+from tools.export_tools import generate_excel_report, generate_monthly_excel_stream
 
 
 def _gmail_service(email: str):
@@ -18,7 +19,10 @@ def _gmail_service(email: str):
     return build("gmail", "v1", credentials=creds)
 
 
-def send_email(from_email: str, to: str, subject: str, body: str, attachment_path: str = "") -> str:
+def send_email(from_email: str, to: str, subject: str, body: str,
+               attachment_path: str = "",
+               attachment_bytes: BytesIO | None = None,
+               attachment_filename: str = "") -> str:
     service = _gmail_service(from_email)
     if not service:
         return (
@@ -26,13 +30,12 @@ def send_email(from_email: str, to: str, subject: str, body: str, attachment_pat
             f"Please login at /login first."
         )
     try:
-        import mimetypes
         from email.mime.multipart import MIMEMultipart
         from email.mime.text import MIMEText
         from email.mime.base import MIMEBase
         from email import encoders
 
-        if attachment_path:
+        if attachment_path or attachment_bytes:
             msg = MIMEMultipart()
             msg.attach(MIMEText(body, "plain"))
             msg["Subject"] = subject
@@ -40,10 +43,14 @@ def send_email(from_email: str, to: str, subject: str, body: str, attachment_pat
             msg["To"] = to
 
             part = MIMEBase("application", "octet-stream")
-            with open(attachment_path, "rb") as f:
-                part.set_payload(f.read())
+            if attachment_bytes:
+                part.set_payload(attachment_bytes.getvalue())
+                filename = attachment_filename or "attachment.xlsx"
+            else:
+                with open(attachment_path, "rb") as f:
+                    part.set_payload(f.read())
+                filename = attachment_path.split("/")[-1]
             encoders.encode_base64(part)
-            filename = attachment_path.split("/")[-1]
             part.add_header("Content-Disposition", f"attachment; filename={filename}")
             msg.attach(part)
         else:
@@ -54,7 +61,7 @@ def send_email(from_email: str, to: str, subject: str, body: str, attachment_pat
             msg["To"] = to
 
         encoded = base64.urlsafe_b64encode(msg.as_bytes()).decode()
-        body_raw = {"raw": encoded}
+        body_raw = {"raw":encoded}
         result = service.users().messages().send(userId="me", body=body_raw).execute()
         return f"Email sent to {to} (Gmail API) | ID: {result.get('id')}"
     except HttpError as e:
@@ -157,11 +164,15 @@ def send_report(period: str, year: int, month: int, day: int) -> str:
 
     subject = f"Production Report – {period_label} {period_str}"
 
-    attachment_path = ""
-    if period in ("weekly", "monthly"):
+    if period == "monthly":
+        buf, filename = generate_monthly_excel_stream(year, month)
+        return send_email(from_email, MANAGER_EMAIL, subject, "\n".join(body_lines),
+                          attachment_bytes=buf, attachment_filename=filename)
+    elif period == "weekly":
         attachment_path = generate_excel_report(period, year, month, day)
+        return send_email(from_email, MANAGER_EMAIL, subject, "\n".join(body_lines), attachment_path)
 
-    return send_email(from_email, MANAGER_EMAIL, subject, "\n".join(body_lines), attachment_path)
+    return send_email(from_email, MANAGER_EMAIL, subject, "\n".join(body_lines))
 
 
 def send_summary(period: str, year: int, month: int, day: int) -> str:

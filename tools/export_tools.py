@@ -7,6 +7,7 @@ import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 
 from config import DAILY_LOGS_DIR, HISTORY_DIR, FIXED_WORKERS
+from tools.database import get_db
 from tools.database import (
     get_daily_totals,
     get_active_workers,
@@ -14,6 +15,20 @@ from tools.database import (
     get_worker_month_production,
     get_worker_daily_breakdown,
 )
+
+
+def _get_date_absence_info(date_str: str) -> tuple[bool, str | None]:
+    conn = get_db()
+    worker_count = len(FIXED_WORKERS)
+    absent = conn.execute(
+        """SELECT COUNT(*) AS cnt, reason FROM daily_log
+           WHERE entry_date = ? AND status = 'absent'
+           GROUP BY reason ORDER BY cnt DESC LIMIT 1""",
+        (date_str,),
+    ).fetchone()
+    if absent and absent["cnt"] >= worker_count:
+        return (True, absent["reason"] or None)
+    return (False, None)
 
 
 def generate_excel_report(period: str = "daily", year: Optional[int] = None, month: Optional[int] = None, day: Optional[int] = None) -> str:
@@ -41,7 +56,7 @@ def _thin_border():
 
 def _style_header(ws, row: int, cols: int):
     fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
-    font = Font(color="FFFFFF", bold=True, size=11)
+    font = Font(name="Calibri", color="FFFFFF", bold=True, size=11)
     center = Alignment(horizontal="center", vertical="center")
     for c in range(1, cols + 1):
         cell = ws.cell(row=row, column=c)
@@ -63,7 +78,7 @@ def _daily_excel_report(year: int, month: int, day: int, product_codes: list[str
     ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(product_codes) + 1)
 
     headers = ["Product"] + product_codes
-    _style_header(ws, 3, len(headers))
+    _write_header_row(ws, 3, headers)
 
     row = 4
     for code in product_codes:
@@ -95,7 +110,7 @@ def _weekly_excel_report(year: int, month: int, day: int, product_codes: list[st
     ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(product_codes) + 2)
 
     headers = ["Date", "Day"] + product_codes
-    _style_header(ws, 3, len(headers))
+    _write_header_row(ws, 3, headers)
 
     row = 4
     for i in range(7):
@@ -151,27 +166,39 @@ def _monthly_excel_report(year: int, month: int, product_codes: list[str]) -> st
     ws.row_dimensions[2].height = 18
 
     headers = ["Date"] + product_codes
-    _style_header(ws, 4, len(headers))
+    _write_header_row(ws, 4, headers)
 
     row = 5
     grand_totals = {code: 0 for code in product_codes}
+    absent_fill = PatternFill(start_color="FCE8E6", end_color="FCE8E6", fill_type="solid")
+    absent_font = Font(name="Calibri", color="D93025", bold=True)
     for d in range(1, days + 1):
         date_str = f"{year}-{month:02d}-{d:02d}"
+        all_absent, reason = _get_date_absence_info(date_str)
         totals = get_daily_totals(date_str)
-        has_data = any(totals.values())
-        if not has_data:
-            continue
         cell = ws.cell(row=row, column=1, value=date_str)
         cell.border = _thin_border()
         cell.font = Font(name="Calibri", bold=True)
         cell.alignment = Alignment(horizontal="center")
-        for j, code in enumerate(product_codes):
-            qty = totals.get(code, 0)
-            cell = ws.cell(row=row, column=2 + j, value=qty)
-            cell.border = _thin_border()
-            cell.font = Font(name="Calibri")
-            cell.alignment = Alignment(horizontal="center")
-            grand_totals[code] += qty
+        if all_absent and reason:
+            cell.fill = absent_fill
+            ws.merge_cells(start_row=row, start_column=2, end_row=row, end_column=num_cols)
+            rc = ws.cell(row=row, column=2, value=reason)
+            rc.border = _thin_border()
+            rc.fill = absent_fill
+            rc.font = absent_font
+            rc.alignment = Alignment(horizontal="center")
+            for c in range(2, num_cols + 1):
+                ws.cell(row=row, column=c).border = _thin_border()
+                ws.cell(row=row, column=c).fill = absent_fill
+        else:
+            for j, code in enumerate(product_codes):
+                qty = totals.get(code, 0)
+                cell = ws.cell(row=row, column=2 + j, value=qty)
+                cell.border = _thin_border()
+                cell.font = Font(name="Calibri")
+                cell.alignment = Alignment(horizontal="center")
+                grand_totals[code] += qty
         row += 1
 
     total_cell = ws.cell(row=row, column=1, value="TOTAL")
@@ -422,27 +449,39 @@ def generate_monthly_excel_stream(year: int, month: int) -> tuple[BytesIO, str]:
     ws.row_dimensions[2].height = 18
 
     headers = ["Date"] + product_codes
-    _style_header(ws, 4, len(headers))
+    _write_header_row(ws, 4, headers)
 
     row = 5
     grand_totals = {code: 0 for code in product_codes}
+    absent_fill = PatternFill(start_color="FCE8E6", end_color="FCE8E6", fill_type="solid")
+    absent_font = Font(name="Calibri", color="D93025", bold=True)
     for d in range(1, days + 1):
         date_str = f"{year}-{month:02d}-{d:02d}"
+        all_absent, reason = _get_date_absence_info(date_str)
         totals = get_daily_totals(date_str)
-        has_data = any(totals.values())
-        if not has_data:
-            continue
         cell = ws.cell(row=row, column=1, value=date_str)
         cell.border = _thin_border()
         cell.font = Font(name="Calibri", bold=True)
         cell.alignment = Alignment(horizontal="center")
-        for j, code in enumerate(product_codes):
-            qty = totals.get(code, 0)
-            cell = ws.cell(row=row, column=2 + j, value=qty)
-            cell.border = _thin_border()
-            cell.font = Font(name="Calibri")
-            cell.alignment = Alignment(horizontal="center")
-            grand_totals[code] += qty
+        if all_absent and reason:
+            cell.fill = absent_fill
+            ws.merge_cells(start_row=row, start_column=2, end_row=row, end_column=num_cols)
+            rc = ws.cell(row=row, column=2, value=reason)
+            rc.border = _thin_border()
+            rc.fill = absent_fill
+            rc.font = absent_font
+            rc.alignment = Alignment(horizontal="center")
+            for c in range(2, num_cols + 1):
+                ws.cell(row=row, column=c).border = _thin_border()
+                ws.cell(row=row, column=c).fill = absent_fill
+        else:
+            for j, code in enumerate(product_codes):
+                qty = totals.get(code, 0)
+                cell = ws.cell(row=row, column=2 + j, value=qty)
+                cell.border = _thin_border()
+                cell.font = Font(name="Calibri")
+                cell.alignment = Alignment(horizontal="center")
+                grand_totals[code] += qty
         row += 1
 
     total_cell = ws.cell(row=row, column=1, value="TOTAL")
