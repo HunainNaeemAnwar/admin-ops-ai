@@ -1,6 +1,8 @@
 import os
-os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
-os.environ["OAUTHLIB_RELAX_TOKEN_SCOPE"] = "1"
+from config import FRONTEND_URL
+if "localhost" in FRONTEND_URL or "dev" in FRONTEND_URL:
+    os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
+    os.environ["OAUTHLIB_RELAX_TOKEN_SCOPE"] = "1"
 
 import json
 import hashlib
@@ -76,9 +78,13 @@ def exchange_code(state: str, redirect_uri: str, callback_url: str, code_verifie
         from googleapiclient.discovery import build
         service = build("oauth2", "v2", credentials=creds)
         user_info = service.userinfo().get().execute()
-        email = user_info.get("email", email)
-    except Exception:
-        pass
+        fetched = user_info.get("email", "")
+        if fetched:
+            email = fetched
+        else:
+            raise ValueError("Google returned empty email")
+    except Exception as e:
+        print(f"[OAuth] Failed to fetch user email: {e}")
 
     return creds, email
 

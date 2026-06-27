@@ -21,6 +21,9 @@ def seed():
         ("10*25", "10x25 bolt", RATE_10X25),
     ]
     for code, desc, rate in products:
+        if rate <= 0:
+            print(f"WARNING: {code} rate is {rate} (check .env RATE_{code.replace('*','X')})")
+    for code, desc, rate in products:
         cursor.execute(
             "UPDATE products SET rate = ?, description = ?, tax_pct = ? WHERE code = ?",
             (rate, desc, TAX_PERCENTAGE, code),

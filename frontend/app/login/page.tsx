@@ -40,7 +40,7 @@ function LoginContent() {
             Sign in with your Google account to access the admin dashboard.
           </p>
           <a
-            href={`${process.env.NEXT_PUBLIC_BACKEND_URL || ""}/admin/login`}
+            href="/admin/login"
             className="inline-flex w-full items-center justify-center rounded-md px-4 py-2.5 text-sm font-medium text-white transition-opacity min-h-[44px]"
             style={{ background: "var(--color-success)" }}
             onMouseEnter={(e) => e.currentTarget.style.opacity = "0.9"}

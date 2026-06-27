@@ -1,12 +1,12 @@
 import json
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Optional
 
-from fastapi import APIRouter, Request, HTTPException, Form, Depends, Query
+from fastapi import APIRouter, Request, HTTPException, Form, Depends, Query, BackgroundTasks
 from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse, JSONResponse, StreamingResponse
 
-from config import BASE_DIR, FRONTEND_URL
+from config import BASE_DIR, FRONTEND_URL, GMAIL_REDIRECT_URI
 from schemas import (
     WorkerOut, ProductOut, DailyReport, DailyLogEntry, WorkerMonthData,
     WorkerDailyBreakdown, MonthlyReport, MonthlyWorkerSummary,
@@ -32,6 +32,29 @@ admin_router = APIRouter(prefix="/admin")
 
 TEMPLATES_DIR = BASE_DIR / "web_ui" / "templates"
 _oauth_states: dict[str, dict] = {}
+_cleanup_states_last: float = 0
+
+
+def _cleanup_expired_states():
+    global _cleanup_states_last
+    now = datetime.now()
+    if now.timestamp() - _cleanup_states_last < 300:
+        return
+    _cleanup_states_last = now.timestamp()
+    cutoff = now - timedelta(hours=1)
+    expired = [s for s, d in _oauth_states.items() if datetime.fromisoformat(d["created"]) < cutoff]
+    for s in expired:
+        _oauth_states.pop(s, None)
+
+
+def require_csrf(request: Request):
+    origin = request.headers.get("origin", "")
+    referer = request.headers.get("referer", "")
+    allowed = FRONTEND_URL.rstrip("/")
+    if origin and not origin.rstrip("/").startswith(allowed):
+        raise HTTPException(403, "CSRF: origin not allowed")
+    if referer and not referer.rstrip("/").startswith(allowed):
+        raise HTTPException(403, "CSRF: referer not allowed")
 
 
 def _read_template(name: str) -> str:
@@ -94,8 +117,7 @@ def get_current_user(request: Request) -> str | None:
     email = _decrypt_auth_cookie(request)
     if email:
         return email
-    users = list_authorized_users()
-    return users[0] if users else None
+    return None
 
 
 CurrentUser = Annotated[str | None, Depends(get_current_user)]
@@ -169,8 +191,13 @@ async def api_auth_logout() -> JSONResponse:
 # ── PUBLIC ROUTES ────────────────────────────────────
 
 @router.get("/", response_model=StatusOut)
-async def worker_dashboard() -> StatusOut:
-    _check_auto_archive()
+async def worker_dashboard(background_tasks: BackgroundTasks) -> StatusOut:
+    today = date.today()
+    if today.day == 1:
+        prev_month = today.month - 1 or 12
+        prev_year = today.year if today.month > 1 else today.year - 1
+        if not is_month_archived(prev_year, prev_month):
+            background_tasks.add_task(_check_auto_archive)
     return StatusOut(status="ok", message="Admin Ops AI is running")
 
 
@@ -267,8 +294,8 @@ async def api_history_months() -> dict:
 
 @admin_router.get("/login")
 async def admin_login(request: Request) -> RedirectResponse:
-    base = _base_url(request)
-    redirect_uri = f"{base}/oauth/callback"
+    _cleanup_expired_states()
+    redirect_uri = GMAIL_REDIRECT_URI
     auth_url, state, code_verifier = get_authorization_url(redirect_uri)
     _oauth_states[state] = {
         "created": datetime.now().isoformat(),
@@ -293,6 +320,9 @@ async def oauth_callback(
     state_data = _oauth_states.pop(state, None)
     if not state_data:
         raise HTTPException(400, "Invalid state parameter")
+    created = datetime.fromisoformat(state_data["created"])
+    if datetime.now() - created > timedelta(minutes=10):
+        raise HTTPException(400, "State parameter expired")
 
     redirect_uri = state_data["redirect_uri"]
     code_verifier = state_data.get("code_verifier", "")
@@ -305,14 +335,15 @@ async def oauth_callback(
     fernet = _get_fernet()
     encrypted = fernet.encrypt(cookie_data.encode()).decode()
 
-    redirect_path = f"{FRONTEND_URL}/admin" if is_father else f"{FRONTEND_URL}/"
+    redirect_path = f"{FRONTEND_URL}/oauth/callback"
     resp = RedirectResponse(url=redirect_path, status_code=303)
+    secure_cookie = FRONTEND_URL.startswith("https")
     resp.set_cookie(
         key="auth",
         value=encrypted,
         max_age=259200,
         httponly=True,
-        secure=False,
+        secure=secure_cookie,
         samesite="lax",
         path="/",
     )
@@ -323,7 +354,9 @@ async def oauth_callback(
 async def admin_logout(email: str = None) -> RedirectResponse:
     if email:
         delete_token(email)
-    return RedirectResponse(url="/admin")
+    resp = RedirectResponse(url="/admin")
+    resp.set_cookie("auth", "", max_age=0, path="/")
+    return resp
 
 
 # ── ADMIN ROUTES ─────────────────────────────────────
@@ -456,14 +489,16 @@ async def admin_record_work(
     request: Request = None,
 ) -> ActionOut:
     require_father(user)
+    require_csrf(request)
     entry = json.dumps({"worker": data.worker, "product_code": data.product_code, "quantity": data.quantity})
     result = log_production_json(f"[{entry}]")
     return ActionOut(message=result)
 
 
 @admin_router.post("/rejection", response_model=ActionOut)
-async def admin_add_rejection(data: RejectionIn, user: CurrentUser) -> ActionOut:
+async def admin_add_rejection(data: RejectionIn, user: CurrentUser, request: Request) -> ActionOut:
     require_father(user)
+    require_csrf(request)
     from tools.rejection_tools import log_rejection as rej_log
     excluded = json.loads(data.excluded_workers)
     result = rej_log(data.year, data.month, data.product_code, data.total_qty, excluded)
@@ -471,16 +506,18 @@ async def admin_add_rejection(data: RejectionIn, user: CurrentUser) -> ActionOut
 
 
 @admin_router.post("/advance", response_model=ActionOut)
-async def admin_add_advance(data: AdvanceIn, user: CurrentUser) -> ActionOut:
+async def admin_add_advance(data: AdvanceIn, user: CurrentUser, request: Request) -> ActionOut:
     require_father(user)
+    require_csrf(request)
     from tools.advance_tools import record_advance as adv_rec
     result = adv_rec(data.worker, data.amount, data.year, data.month, data.description)
     return ActionOut(message=result)
 
 
 @admin_router.post("/payslip", response_model=ActionOut)
-async def admin_generate_payslip(data: PayslipIn, user: CurrentUser) -> ActionOut:
+async def admin_generate_payslip(data: PayslipIn, user: CurrentUser, request: Request) -> ActionOut:
     require_father(user)
+    require_csrf(request)
     from agent_system.orchestrator import generate_payslip_tool
     result = generate_payslip_tool(data.year, data.month, data.worker or None)
     return ActionOut(message=result)
@@ -516,8 +553,9 @@ async def admin_download_payslip_pdf(worker: str, year: int, month: int, user: C
 
 
 @admin_router.post("/email", response_model=ActionOut)
-async def admin_send_email_report(data: EmailReportIn, user: CurrentUser) -> ActionOut:
+async def admin_send_email_report(data: EmailReportIn, user: CurrentUser, request: Request) -> ActionOut:
     require_father(user)
+    require_csrf(request)
     from tools.email_tools import send_report
     today = date.today()
     result = send_report(data.period, data.year or today.year, data.month or today.month, data.day or today.day)
@@ -525,19 +563,21 @@ async def admin_send_email_report(data: EmailReportIn, user: CurrentUser) -> Act
 
 
 @admin_router.post("/chat", response_model=ChatOut)
-async def admin_agent_chat(data: ChatIn, user: CurrentUser) -> ChatOut:
+async def admin_agent_chat(data: ChatIn, user: CurrentUser, request: Request) -> ChatOut:
     require_father(user)
+    require_csrf(request)
     from agent_system.orchestrator import chat
     result = await chat(data.text)
     return ChatOut(response=result)
 
 
 @admin_router.post("/chat/stream")
-async def admin_agent_chat_stream(data: ChatIn, user: CurrentUser) -> StreamingResponse:
+async def admin_agent_chat_stream(data: ChatIn, user: CurrentUser, request: Request) -> StreamingResponse:
     require_father(user)
+    require_csrf(request)
     from agent_system.orchestrator import stream_chat
     return StreamingResponse(
-        stream_chat(data.text),
+        stream_chat(data.text, session_id=data.session_id),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -546,8 +586,44 @@ async def admin_agent_chat_stream(data: ChatIn, user: CurrentUser) -> StreamingR
     )
 
 
-@admin_router.post("/backfill")
-async def admin_backfill(user: CurrentUser) -> dict:
+@admin_router.get("/chat/sessions")
+async def admin_chat_sessions(user: CurrentUser) -> list[dict]:
     require_father(user)
+    from tools.database import list_chat_sessions
+    return list_chat_sessions()
+
+
+@admin_router.get("/chat/sessions/{session_id}")
+async def admin_chat_session_detail(session_id: str, user: CurrentUser) -> list:
+    require_father(user)
+    from tools.database import load_chat_messages, _extract_text
+    items = load_chat_messages(session_id)
+    for item in items:
+        item["content"] = _extract_text(item)
+    return items
+
+
+@admin_router.delete("/chat/sessions/{session_id}")
+async def admin_chat_session_delete(session_id: str, user: CurrentUser, request: Request) -> dict:
+    require_father(user)
+    require_csrf(request)
+    from agent_system.orchestrator import _remove_memory
+    await _remove_memory(session_id)
+    return {"status": "deleted"}
+
+
+@admin_router.post("/chat/sessions/{session_id}/forget")
+async def admin_chat_session_forget(session_id: str, user: CurrentUser, request: Request) -> dict:
+    require_father(user)
+    require_csrf(request)
+    from agent_system.orchestrator import _forget_memory
+    await _forget_memory(session_id)
+    return {"status": "forgotten"}
+
+
+@admin_router.post("/backfill")
+async def admin_backfill(user: CurrentUser, request: Request) -> dict:
+    require_father(user)
+    require_csrf(request)
     from tools.database import backfill_history
     return backfill_history()

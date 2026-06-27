@@ -137,7 +137,7 @@ export default function MonthlyReportPage() {
           </button>
         </div>
         <a
-          href={`${process.env.NEXT_PUBLIC_BACKEND_URL || ""}/admin/monthly/excel?year=${year}&month=${month}`}
+          href={`/admin/monthly/excel?year=${year}&month=${month}`}
           target="_blank"
           rel="noopener noreferrer"
           className="inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold transition-colors"

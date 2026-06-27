@@ -56,6 +56,8 @@ ROUTER_MODEL = os.getenv("ROUTER_MODEL", "") or None  # Override: different mode
 
 MANAGER_EMAIL = os.getenv("MANAGER_EMAIL", "")
 FATHER_EMAIL = os.getenv("FATHER_EMAIL", MANAGER_EMAIL)
+if not FATHER_EMAIL:
+    FATHER_EMAIL = None
 
 GMAIL_CLIENT_ID = os.getenv("GMAIL_CLIENT_ID", "")
 GMAIL_CLIENT_SECRET = os.getenv("GMAIL_CLIENT_SECRET", "")

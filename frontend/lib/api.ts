@@ -1,5 +1,3 @@
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || ""
-
 export class ApiError extends Error {
   status: number
 
@@ -14,15 +12,13 @@ export async function fetchApi<T>(
   path: string,
   options?: RequestInit
 ): Promise<T> {
-  const url = `${BACKEND_URL}${path}`
-
   const method = options?.method || "GET"
   const headers: Record<string, string> = { ...(options?.headers as Record<string, string>) }
   if (method !== "GET") {
     headers["Content-Type"] = "application/json"
   }
 
-  const res = await fetch(url, {
+  const res = await fetch(path, {
     ...options,
     credentials: "include",
     headers,

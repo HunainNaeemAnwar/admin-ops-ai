@@ -20,6 +20,7 @@ from tools.database import (
     get_worker_month_production,
     get_product_id, get_product_rate,
     get_total_advances_for_worker_month,
+    get_advances_for_worker_month,
     save_payslip,
     log_production as db_log_production,
     mark_absent as db_mark_absent,
@@ -107,8 +108,11 @@ class ProductionInput:
             raise ValueError(f"Invalid product '{product_code}'. Valid: {', '.join(sorted(VALID_PRODUCTS))}")
         if quantity <= 0:
             raise ValueError(f"Quantity must be positive, got {quantity}")
-        if entry_date and len(entry_date) != 10:
-            raise ValueError(f"Invalid date format: {entry_date}")
+        if entry_date:
+            try:
+                datetime.strptime(entry_date, "%Y-%m-%d")
+            except ValueError:
+                raise ValueError(f"Invalid date format: {entry_date}. Use YYYY-MM-DD")
         self.worker = worker
         self.product_code = product_code
         self.quantity = quantity
@@ -226,7 +230,10 @@ def get_date_status(date_str: str = "") -> str:
 def get_production_summary(period: str = "daily", year: Optional[int] = None, month: Optional[int] = None, day: Optional[int] = None) -> str:
     from tools.report_tools import get_summary
     today = date.today()
-    return get_summary(period, year or today.year, month or today.month, day or today.day)
+    y = year or today.year
+    m = month or (today.month if y == today.year else 1)
+    d = day or (today.day if y == today.year and m == today.month else 1)
+    return get_summary(period, y, m, d)
 
 
 def get_catalog() -> str:
@@ -257,6 +264,16 @@ def record_rejection(year: int, month: int, product_code: str, total_qty: int, e
         return f"Unknown product '{product_code}'. Valid: NUT, 10*20, 6*25, 6*30, 10*25"
     if excluded_workers is None:
         excluded_workers = []
+
+    existing = get_rejections_for_month(year, month)
+    for r in existing:
+        if r["product_code"] == product_code:
+            return (
+                f"⚠️ Rejection already exists for {product_code} in {year}-{month:02d} "
+                f"(id={r['id']}, qty={r['total_qty']}). "
+                f"Delete existing first or update manually."
+            )
+
     rid = db_log_rejection(year, month, product["id"], total_qty, excluded_workers)
     active = get_active_workers()
     eligible = [w["name"] for w in active if w["name"] not in excluded_workers]
@@ -284,7 +301,16 @@ def get_rejection_distribution(year: int, month: int) -> list[dict]:
 # ── Advances ─────────────────────────────────────────
 
 def record_worker_advance(worker: str, amount: float, year: int, month: int, description: str = "") -> str:
+    if amount <= 0:
+        return f"⚠️ Amount must be positive, got Rs {amount:,.2f}"
     worker_id = get_or_create_worker(worker)
+    existing = get_advances_for_worker_month(worker_id, year, month)
+    for adv in existing:
+        if adv["amount"] == amount and adv["description"] == description:
+            return (
+                f"⚠️ Duplicate advance: Rs {amount:,.2f} already recorded for {worker} "
+                f"({year}-{month:02d}, id={adv['id']}). Skip kiya."
+            )
     aid = db_record_advance(worker_id, amount, year, month, description)
     total = get_total_advances_for_worker_month(worker_id, year, month)
     return (

@@ -1,6 +1,5 @@
 import sys
-import asyncio
-from datetime import date, datetime
+from datetime import date
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -45,11 +44,8 @@ def main():
         sys.exit(1)
 
     if len(sys.argv) < 2:
-        print("Usage: python main.py [mcp|agent|web|scheduler|seed]")
-        print("  mcp       - FastMCP server (for external agents)")
-        print("  agent     - Interactive OpenAI Agents SDK chat")
+        print("Usage: python main.py [web|seed]")
         print("  web       - FastAPI web UI (with Google OAuth login)")
-        print("  scheduler - APScheduler (reminder-only mode)")
         print("  seed      - Seed database with workers and products")
         sys.exit(1)
 
@@ -61,83 +57,12 @@ def main():
         seed()
         print("Database seeded successfully.")
 
-    elif mode == "mcp":
-        from mcp_server import mcp
-        mcp.run()
-
-    elif mode == "agent":
-        from agent_system.orchestrator import chat, _get_memory
-        _agent_session_id = "default"
-        print("Accountant Agent ready! Type 'exit' to quit.")
-        print("Memory commands:")
-        print('  /memory status   - Check memory size')
-        print('  /memory compact  - Compact memory (keep last 2 exchanges)')
-        print('  /memory cleanup  - Remove corrupted/tool messages')
-        print('  /memory delete   - Delete all memory (fresh start)')
-        print()
-        print("Examples:")
-        print('  - "Aj ka total kya hai?"')
-        print('  - "Kaleem ne 300 nut aur 150 10*20 kiye"')
-        print('  - "Sab ki payslip banao June 2026"')
-        print('  - "Manager ko daily email bhejo"')
-        print()
-
-        async def interactive():
-            sid = _agent_session_id
-            while True:
-                try:
-                    user_input = input("\nYou: ").strip()
-                    if not user_input:
-                        continue
-                    if user_input.lower() in ("exit", "quit", "bye"):
-                        print("Accountant Agent: Khuda Hafiz!")
-                        break
-
-                    if user_input.startswith("/memory"):
-                        parts = user_input.split()
-                        cmd = parts[1] if len(parts) > 1 else ""
-                        mem = _get_memory(sid)
-                        if cmd == "status":
-                            items = await mem._session.get_items()
-                            count = len(items)
-                            tokens = sum(len(str(i)) for i in items) // 4
-                            print(f"\n[Memory: {count} items, ~{tokens} tokens in session '{sid}']")
-                        elif cmd == "compact":
-                            result = await mem.compact()
-                            print(f"\n[Memory: {result}]")
-                        elif cmd == "delete":
-                            result = await mem.delete()
-                            print(f"\n[Memory: {result}]")
-                        elif cmd == "cleanup":
-                            result = await mem.cleanup()
-                            print(f"\n[Memory: {result}]")
-                        elif cmd == "cost":
-                            from agent_system.cost_tracker import format_session_cost
-                            print(f"\n{format_session_cost(sid)}")
-                        else:
-                            print("\n[Memory: Unknown command. Use: /memory status | compact | delete | cleanup | cost]")
-                        continue
-
-                    print("\nAccountant Agent: Thinking...")
-                    response = await chat(user_input, sid)
-                    print(f"\nAccountant Agent: {response}")
-                except KeyboardInterrupt:
-                    print("\n\nBye!")
-                    break
-                except Exception as e:
-                    print(f"\nError: {e}")
-
-        asyncio.run(interactive())
-
     elif mode == "web":
         import uvicorn
         from contextlib import asynccontextmanager
         from fastapi import FastAPI
         from fastapi.middleware.cors import CORSMiddleware
         from fastapi.staticfiles import StaticFiles
-        from fastmcp.utilities.lifespan import combine_lifespans
-
-        from mcp_server import mcp_app as mcp_asgi
         from web_ui.middleware import (
             RateLimitMiddleware, RateLimiter,
             CorrelationIDMiddleware,
@@ -160,19 +85,17 @@ def main():
                 print(f"[Warmup] Cerebras API not reachable: {e}")
             yield
 
-        merged_lifespan = combine_lifespans(mcp_asgi.lifespan, _warmup_lifespan)
-        app = FastAPI(title="Admin Ops AI", version="1.0.0", lifespan=merged_lifespan)
+        app = FastAPI(title="Admin Ops AI", version="1.0.0", lifespan=_warmup_lifespan)
         app.add_middleware(CorrelationIDMiddleware)
         app.add_middleware(RateLimitMiddleware, rate_limiter=RateLimiter(max_requests=120, window_seconds=60))
         app.add_middleware(
             CORSMiddleware,
             allow_origins=["http://localhost:3000"],
             allow_credentials=True,
-            allow_methods=["GET", "POST"],
+            allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
             allow_headers=["Content-Type"],
         )
         app.mount("/static", StaticFiles(directory="web_ui/static"), name="static")
-        app.mount("/mcp", mcp_asgi)
 
         from web_ui.routes import router, admin_router
         app.include_router(router)
@@ -194,21 +117,13 @@ def main():
         setup_signal_handlers()
 
         if not GMAIL_CLIENT_ID or GMAIL_CLIENT_ID == "your_client_id":
-            print("\n⚠️  GMAIL_CLIENT_ID not configured!")
+            print("\nERROR: GMAIL_CLIENT_ID not configured!")
             print("   Google OAuth login will not work until you set it in .env")
-            print()
+            print("   Exiting.")
+            sys.exit(1)
 
         print("Web UI: http://localhost:8000")
-        print("MCP Server: http://localhost:8000/mcp")
         uvicorn.run(app, host="0.0.0.0", port=8000)
-
-    elif mode == "scheduler":
-        from scheduler import setup_scheduler
-        setup_scheduler()
-        try:
-            asyncio.get_event_loop().run_forever()
-        except KeyboardInterrupt:
-            print("\nScheduler stopped.")
 
     elif mode == "backfill":
         print("Backfilling history from daily_log...")
@@ -221,7 +136,7 @@ def main():
 
     else:
         print(f"Unknown mode: {mode}")
-        print("Usage: python main.py [mcp|agent|web|scheduler|backfill]")
+        print("Usage: python main.py [web|backfill]")
 
 
 if __name__ == "__main__":

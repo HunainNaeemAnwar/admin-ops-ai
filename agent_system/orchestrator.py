@@ -24,7 +24,7 @@ from tools.database import (
     get_active_workers, get_all_products, get_worker_id,
     get_total_advances_for_worker_month,
     get_worker_month_production, get_product_id,
-    save_payslip,
+    get_payslip, save_payslip,
 )
 from tools.production_tools import get_product_info
 from agent_system.memory_manager import ConversationMemory
@@ -34,12 +34,28 @@ from agent_system.cost_tracker import track_usage, format_session_cost
 BASE_RUN_CONFIG = RunConfig(tool_not_found_behavior="return_error_to_model")
 
 _memories: dict[str, ConversationMemory] = {}
+_memory_lock = asyncio.Lock()
 
 
-def _get_memory(session_id: str = "default") -> ConversationMemory:
-    if session_id not in _memories:
-        _memories[session_id] = ConversationMemory(session_id)
-    return _memories[session_id]
+async def _get_memory(session_id: str = "default") -> ConversationMemory:
+    async with _memory_lock:
+        if session_id not in _memories:
+            _memories[session_id] = ConversationMemory(session_id)
+        return _memories[session_id]
+
+
+async def _remove_memory(session_id: str):
+    memory = _memories.pop(session_id, None)
+    if memory:
+        await memory.delete()
+    ConversationMemory.delete_from_db(session_id)
+
+
+async def _forget_memory(session_id: str):
+    """Clear SDK session cache without touching chat_messages table."""
+    _memories.pop(session_id, None)
+    m = ConversationMemory(session_id)
+    await m.delete()
 
 
 # ── Input Guardrail ────────────────────────────────────
@@ -153,7 +169,7 @@ Today: {date.today()}
 - update_entry_tool: Change quantity. Provide worker+product+date or entry_id.
 </tools>
 
-<rules>
+  <rules>
 - Call the tool first, then confirm with a short message.
 - Duplicate exists? Say so. User resends same data → overwrite.
 - Use "sab" when all 8 workers have same product+quantity.
@@ -163,6 +179,7 @@ Today: {date.today()}
 - Only record what is explicitly stated.
 - If a worker is excluded ("k ilawa", "except", "baqi", "sivay"), record the included workers' entries first, then ask about the excluded worker's status before marking anything.
 - Do not record 0 for the excluded worker. Do not guess. Ask first.
+- Format confirmations as markdown: one row per worker in a small table or bullet list.
 </rules>
 
 <examples>
@@ -224,12 +241,20 @@ Today: {date.today()}
 - "email" → send_report_tool.
 - "status" / "check" / "kya hai" → get_daily_status_tool or get_summary_tool.
 - "catalog" / "workers" / "products" → list_catalog_tool.
+- Format all output as markdown tables when showing worker×product data.
+  Use pipe tables: | Worker | NUT | 10*20 | ... |
+- Keep response concise — table + summary line.
 </rules>
 
 <examples>
 User: aj ka status kya hai
 → Call get_daily_status_tool
-Answer: Aaj 5 workers present hain. Total 2,400 pieces. 3 absent.
+Answer: | Worker     | NUT  | Status |
+           |------------|------|--------|
+           | Naeem      | 300  | ✅     |
+           | Kaleem     | 250  | ✅     |
+           | Akbar      | 0    | ABSENT |
+           Total: 550 pieces. 1 absent.
 
 User: manager ko email bhej do
 → Call send_report_tool
@@ -237,15 +262,18 @@ Answer: Manager ko email bhej diya ✅
 
 User: catalog dikhao
 → Call list_catalog_tool
-Answer: Workers: Naeem, Kaleem, Akbar... Products: NUT, 10*20...
-
-User: 22 June ka data check karo
-→ Call get_daily_status_tool("2026-06-22")
-Answer: 22 June ko 4 workers present. Total 1,800 pieces.
+Answer: | Worker  | Product | Rate    |
+           |---------|---------|---------|
+           | Naeem   | NUT     | Rs 0.50 |
 
 User: monthly summary do June 2026
 → Call get_summary_tool("monthly", 2026, 6)
-Answer: June 2026 total: 45,000 pieces across 5 products.
+Answer: | Worker  | NUT    | 10*20  | 6*25   |
+           |---------|--------|--------|--------|
+           | Naeem   | 5,000  | 750    | 3,000  |
+           | Kaleem  | 5,000  | 750    | 3,000  |
+           | Total   | 10,000 | 1,500  | 6,000  |
+           June 2026 total: 17,500 pieces.
 </examples>"""
 
 
@@ -318,9 +346,10 @@ Today: {date.today()}
 </handoffs>
 
 <rules>
-- Greeting / unclear → respond naturally in Roman Urdu/English.
-- "system kaise kaam karta hai" → "Koi production record karwana hai ya report chahiye?"
-- Keep responses short.
+- Greeting → respond naturally.
+- If user seems dissatisfied or confused, ask a specific clarifying question based on recent context — do not default to a generic response.
+- Format all data output as markdown tables when presenting numbers.
+- Keep responses concise.
 </rules>
 
 <examples>
@@ -328,9 +357,9 @@ User: Naeem ne 300 nut kiye          → delegate_production
 User: aj ka status kya hai             → delegate_reporting
 User: Kaleem ki payslip banao           → delegate_finance
 User: manager ko email bhej do          → delegate_reporting
-User: kya haal hai                      → "👋 Main yahan hoon! Koi kaam hai?"
-User: yeh system kaise kaam karta hai   → "Koi production record karwana hai ya report chahiye?"
-User: unclear                           → "Bhai, kya karna chahte hain? Production, report, ya payslip?"
+User: kya haal hai                      → "Main theek hoon! Koi kaam hai?"
+User: yeh system kaise kaam karta hai   → "Production data record kar sakte hain, reports dekh sakte hain, payslips generate kar sakte hain. Kya karna chahte hain?"
+User: nahi yeh nahi / kuch aur          → Acknowledge confusion, reference last few messages, ask specific question.
 </examples>"""
 
 
@@ -634,10 +663,14 @@ def generate_payslip_tool(year: int, month: int, worker: Optional[str] = None) -
             product_totals[code] = product_totals.get(code, 0) + p["quantity"]
 
         gross_total = 0.0
+        tax_total = 0.0
         for code, qty in product_totals.items():
             product = get_product_info(code)
             if product:
-                gross_total += qty * product["rate"]
+                val = qty * product["rate"]
+                gross_total += val
+                tax_pct = product["tax_pct"] if product["tax_pct"] > 0 else TAX_PERCENTAGE
+                tax_total += round(val * tax_pct / 100, 2)
 
         rejection_value = 0
         for dist in distribution:
@@ -648,8 +681,16 @@ def generate_payslip_tool(year: int, month: int, worker: Optional[str] = None) -
 
         advance_total = get_total_advances_for_worker_month(wid, y, m)
 
-        tax_amount = round(gross_total * TAX_PERCENTAGE / 100, 2)
+        tax_amount = round(tax_total, 2)
         net_payable = round(gross_total - rejection_value - advance_total - tax_amount, 2)
+
+        existing_payslip = get_payslip(wid, y, m)
+        if existing_payslip:
+            results.append(
+                f"  ⚠️ {w}: {y}-{m:02d} payslip already exists (Rs {existing_payslip['net_payable']:,.0f}). "
+                f"Regenerate to overwrite."
+            )
+            continue
 
         save_payslip(wid, y, m, gross_total, tax_amount, rejection_value, advance_total, net_payable)
         generate_payslip_files(w, y, m)
@@ -767,8 +808,16 @@ def _create_agents(router_model_override=None, specialist_model_override=None):
 # ── Chat ──────────────────────────────────────────────
 
 async def chat(user_input: str, session_id: str = "default") -> str:
-    memory = _get_memory(session_id)
+    memory = await _get_memory(session_id)
     await memory.cleanup()
+
+    existing = await memory.session.get_items()
+
+    if not existing:
+        saved = ConversationMemory.load_from_db(session_id)
+        if saved:
+            await memory.session.add_items(saved)
+            existing = saved
 
     from agent_system.provider import _models as all_models
 
@@ -793,7 +842,7 @@ async def chat(user_input: str, session_id: str = "default") -> str:
                     agent,
                     input=user_input,
                     session=memory.session,
-                    max_turns=10,
+                    max_turns=15,
                     error_handlers={
                         "max_turns": lambda _: RunErrorHandlerResult(
                             final_output="Mujhe is request ko complete karne mein zyada time lag raha hai. Please chhotee request mein tod dein.",
@@ -806,30 +855,39 @@ async def chat(user_input: str, session_id: str = "default") -> str:
             )
             track_usage(session_id, model_name, user_input, str(result.final_output)[:200])
             await memory.compact_if_needed()
+            items = await memory.session.get_items()
+            ConversationMemory.save_to_db(session_id, items)
             return result.final_output
         except asyncio.TimeoutError:
             return "⚠️ Server busy — please thodi der baad try karein."
         except InputGuardrailTripwireTriggered as e:
             msg = e.guardrail_result.output.output_info or "OK"
             await memory.session.add_items([{"role": "assistant", "content": msg}])
+            items = await memory.session.get_items()
+            ConversationMemory.save_to_db(session_id, items)
             return msg
         except (RateLimitError, APIStatusError) as e:
             msg = str(e)
             if "Messages with role 'tool'" in msg:
+                _memories.pop(session_id, None)
                 await memory.delete()
+                ConversationMemory.delete_from_db(session_id)
                 try:
                     result = await asyncio.wait_for(
                         Runner.run(
                             agent,
                             input=user_input,
-                            session=_get_memory(session_id).session,
-                            max_turns=10,
+                            session=(await _get_memory(session_id)).session,
+                            max_turns=15,
                             run_config=BASE_RUN_CONFIG,
                         ),
                         timeout=30,
                     )
                     track_usage(session_id, model_name, user_input, str(result.final_output)[:200])
-                    await _get_memory(session_id).compact_if_needed()
+                    mem = await _get_memory(session_id)
+                    await mem.compact_if_needed()
+                    items = await mem.session.get_items()
+                    ConversationMemory.save_to_db(session_id, items)
                     return result.final_output
                 except Exception:
                     return "Memory corrupted — delete kar di. Dobara try karein."
@@ -848,8 +906,15 @@ async def chat(user_input: str, session_id: str = "default") -> str:
 
 async def stream_chat(user_input: str, session_id: str = "default"):
     """Generator that yields SSE-formatted chunks from streaming agent response."""
-    memory = _get_memory(session_id)
+    memory = await _get_memory(session_id)
     await memory.cleanup()
+
+    existing = await memory.session.get_items()
+
+    if not existing:
+        saved = ConversationMemory.load_from_db(session_id)
+        if saved:
+            await memory.session.add_items(saved)
 
     from agent_system.provider import _models as all_models
 
@@ -872,7 +937,7 @@ async def stream_chat(user_input: str, session_id: str = "default"):
                 agent,
                 input=user_input,
                 session=memory.session,
-                max_turns=10,
+                max_turns=15,
                 run_config=BASE_RUN_CONFIG,
             )
             async for event in result.stream_events():
@@ -883,16 +948,22 @@ async def stream_chat(user_input: str, session_id: str = "default"):
             yield f"data: [DONE]\n\n"
             track_usage(session_id, model_name, user_input, str(result.final_output)[:200])
             await memory.compact_if_needed()
+            items = await memory.session.get_items()
+            ConversationMemory.save_to_db(session_id, items)
             return
         except InputGuardrailTripwireTriggered as e:
             msg = e.guardrail_result.output.output_info or "OK"
             await memory.session.add_items([{"role": "assistant", "content": msg}])
+            items = await memory.session.get_items()
+            ConversationMemory.save_to_db(session_id, items)
             yield f"data: {msg}\n\ndata: [DONE]\n\n"
             return
         except (RateLimitError, APIStatusError) as e:
             msg = str(e)
             if "Messages with role 'tool'" in msg:
+                _memories.pop(session_id, None)
                 await memory.delete()
+                ConversationMemory.delete_from_db(session_id)
                 yield f"data: Memory corrupted — delete kar di. Dobara try karein.\n\ndata: [DONE]\n\n"
                 return
             if attempt == len(fallback_chain) - 1:

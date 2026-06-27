@@ -16,7 +16,7 @@ No auto-email, no auto-payslips — father triggers everything.
 | Layer | Technology |
 |-------|-----------|
 | Frontend (Phase 2) | Next.js + ChatKit |
-| Backend | FastAPI + FastMCP |
+| Backend | FastAPI |
 | Agent SDK | OpenAI Agents SDK 0.17.4 |
 | LLM | Gemini 2.5 Flash (OpenAI-compatible endpoint) |
 | Database | SQLite (dev) → Neon PostgreSQL (prod) |
@@ -695,8 +695,7 @@ admin-ops-ai/
 │   ├── provider.py           # Gemini via OpenAI-compatible endpoint
 │   ├── orchestrator.py       # Agent with 10 tools, memory, chat()
 │   ├── memory_manager.py     # ConversationMemory (SQLiteSession)
-│   ├── data_extractor.py     # NLP extraction from Roman Urdu
-│   └── email_agent.py        # AI email composer
+│   │   └── email_agent.py        # AI email composer
 
 ├── tools/
 │   ├── __init__.py
@@ -725,8 +724,6 @@ admin-ops-ai/
 │   │   └── excel/
 │   └── tokens/               # Encrypted OAuth tokens
 
-├── scheduler.py              # APScheduler (reminders only)
-├── mcp_server.py             # FastMCP server (all 10 tools exposed)
 ├── template.xlsx             # Excel template for exports
 └── seed.py                   # Database seed script (workers + products)
 ```
@@ -746,18 +743,7 @@ cp .env.example .env   # Edit with your values
 python seed.py
 
 # 3. Start
-python main.py agent      # CLI Chat Agent (Gemini)
 python main.py web        # FastAPI + Dashboard (Phase 1 UI)
-python main.py mcp        # FastMCP server (for external agents)
-python main.py scheduler  # Reminders only (never auto-executes)
-```
-
-## Memory Commands (CLI Agent Mode)
-
-```
-/memory status   → Show conversation turn count
-/memory compact  → Keep last 2 exchanges, remove older ones
-/memory delete   → Full reset, fresh conversation
 ```
 
 ---
@@ -825,10 +811,7 @@ Step 3: Email + Payslip
 
 Step 4: Agent + API
   ├── agent_system/orchestrator.py → 10 tools, new instructions
-  ├── agent_system/data_extractor.py → improved NLP
-  ├── mcp_server.py → register 10 tools
-  ├── web_ui/routes.py → new endpoints + auth
-  └── scheduler.py → disable auto, keep reminders
+  └── web_ui/routes.py → new endpoints + auth
 
 Step 5: Migrate old Excel data to SQLite
   └── migration script

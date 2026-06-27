@@ -19,8 +19,8 @@ def record_advance(worker: str, amount: float, year: int, month: int, descriptio
 
 
 def get_advances_summary(year: int, month: int) -> str:
-    from tools.database import get_all_workers
-    workers = get_all_workers()
+    from tools.database import get_active_workers
+    workers = get_active_workers()
     lines = [f"Advances Summary - {year}-{month:02d}:"]
     total_all = 0.0
     for w in workers:

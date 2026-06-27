@@ -111,7 +111,7 @@ export default function WorkerDetailPage({
           </button>
         </div>
         <a
-          href={`${process.env.NEXT_PUBLIC_BACKEND_URL || ""}/api/worker/${encodeURIComponent(workerName)}/excel/${year}/${month}`}
+           href={`/api/worker/${encodeURIComponent(workerName)}/excel/${year}/${month}`}
           target="_blank"
           rel="noopener noreferrer"
           className="inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold transition-colors"

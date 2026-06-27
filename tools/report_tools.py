@@ -99,10 +99,14 @@ def _weekly_summary(year: int, month: int, day: int) -> str:
 
 
 def _monthly_summary(year: int, month: int) -> str:
-    lines = [f"Monthly Summary - {year}-{month:02d}"]
     workers = get_active_workers()
     products = get_all_products()
     product_codes = [p["code"] for p in products]
+
+    # Build markdown table
+    header = "| Worker | " + " | ".join(product_codes) + " |"
+    sep = "|--------|" + "|".join("-------" for _ in product_codes) + "|"
+    rows = []
 
     for w in workers:
         wid = w["id"]
@@ -113,6 +117,12 @@ def _monthly_summary(year: int, month: int) -> str:
             for e in entries:
                 code = e["product_code"]
                 worker_totals[code] = worker_totals.get(code, 0) + e["quantity"]
-            parts = [f"{code}: {qty}" for code, qty in sorted(worker_totals.items())]
-            lines.append(f"  {w['name']}: {', '.join(parts)}")
-    return "\n".join(lines)
+            values = [f"{worker_totals.get(c, 0):,}" for c in product_codes]
+            rows.append(f"| {w['name']} | " + " | ".join(values) + " |")
+
+    all_rows = [f"**Monthly Summary - {year}-{month:02d}**", "", header, sep] + rows
+
+    if not rows:
+        all_rows.append("_No production data for this month._")
+
+    return "\n".join(all_rows)

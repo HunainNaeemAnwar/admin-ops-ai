@@ -110,6 +110,16 @@ def init_db():
             FOREIGN KEY (worker_id) REFERENCES workers(id)
         );
 
+        CREATE TABLE IF NOT EXISTS chat_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT NOT NULL,
+            message_data TEXT NOT NULL,
+            created_at TEXT DEFAULT (datetime('now'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_chat_messages_session
+            ON chat_messages(session_id, id);
+
         CREATE TABLE IF NOT EXISTS worker_monthly_history (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             worker_id INTEGER NOT NULL,
@@ -217,7 +227,7 @@ def mark_absent(worker_id: int, entry_date: str, reason: str = "") -> int:
     try:
         cursor = conn.execute(
             """INSERT INTO daily_log (worker_id, product_id, quantity, entry_date, status, reason)
-               VALUES (?, (SELECT id FROM products LIMIT 1), 0, ?, 'absent', ?)""",
+               VALUES (?, (SELECT id FROM products WHERE code = 'NUT'), 0, ?, 'absent', ?)""",
             (worker_id, entry_date, reason),
         )
         conn.commit()
@@ -324,13 +334,17 @@ def get_worker_rejection_share(worker_name: str, year: int, month: int) -> dict[
     for r in rows:
         exclude = json.loads(r["exclude_workers"])
         eligible = [n for n in active_names if n not in exclude]
-        if worker_name in exclude or not eligible:
+        if worker_name in exclude or not eligible or worker_name not in eligible:
             shares[r["product_code"]] = 0
         else:
-            base = r["total_qty"] // len(eligible)
-            remainder = r["total_qty"] % len(eligible)
-            idx = eligible.index(worker_name)
-            shares[r["product_code"]] = base + (1 if idx < remainder else 0)
+            denominator = len(eligible)
+            if denominator == 0:
+                shares[r["product_code"]] = 0
+            else:
+                base = r["total_qty"] // denominator
+                remainder = r["total_qty"] % denominator
+                idx = eligible.index(worker_name)
+                shares[r["product_code"]] = base + (1 if idx < remainder else 0)
     return shares
 
 
@@ -338,10 +352,12 @@ def get_worker_rejection_share(worker_name: str, year: int, month: int) -> dict[
 
 def record_advance(worker_id: int, amount: float, year: int, month: int, description: str = "") -> int:
     conn = get_db()
+    from datetime import date
+    entry_date = date(year, month, 1).isoformat() if year and month else date.today().isoformat()
     cursor = conn.execute(
-        """INSERT INTO advances (worker_id, amount, month, year, description)
-           VALUES (?, ?, ?, ?, ?)""",
-        (worker_id, amount, month, year, description),
+        """INSERT INTO advances (worker_id, amount, date, month, year, description)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (worker_id, amount, entry_date, month, year, description),
     )
     conn.commit()
     aid = cursor.lastrowid
@@ -414,6 +430,99 @@ def get_daily_totals(entry_date: str) -> dict:
         (entry_date,),
     ).fetchall()
     return {r["product_code"]: r["total_qty"] for r in rows}
+
+
+def _extract_text(item: dict) -> str:
+    content = item.get("content", "")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, dict):
+                parts.append(block.get("text", "") or block.get("content", "") or "")
+        return "\n".join(parts).strip()
+    return str(content)
+
+
+def load_chat_messages(session_id: str) -> list:
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT message_data FROM chat_messages WHERE session_id = ? ORDER BY id",
+        (session_id,),
+    ).fetchall()
+    import json
+    items = []
+    for (msg,) in rows:
+        try:
+            item = json.loads(msg)
+            if item.get("role") and _extract_text(item):
+                items.append(item)
+        except (json.JSONDecodeError, TypeError):
+            continue
+    return items
+
+
+def save_chat_messages(session_id: str, messages: list):
+    if not messages:
+        return
+    conn = get_db()
+    import json
+    conn.execute("DELETE FROM chat_messages WHERE session_id = ?", (session_id,))
+    for msg in messages:
+        if msg.get("role") in ("tool", "function"):
+            continue
+        if not msg.get("role"):
+            continue
+        if not _extract_text(msg):
+            continue
+        conn.execute(
+            "INSERT INTO chat_messages (session_id, message_data) VALUES (?, ?)",
+            (session_id, json.dumps(msg)),
+        )
+    conn.commit()
+
+
+def delete_chat_messages(session_id: str):
+    conn = get_db()
+    conn.execute("DELETE FROM chat_messages WHERE session_id = ?", (session_id,))
+    conn.commit()
+
+
+def list_chat_sessions(limit: int = 20) -> list[dict]:
+    import json
+    conn = get_db()
+    rows = conn.execute("""
+        SELECT session_id,
+               MIN(created_at) as created_at,
+               MAX(created_at) as last_activity,
+               COUNT(*) as message_count
+        FROM chat_messages
+        GROUP BY session_id
+        ORDER BY last_activity DESC
+        LIMIT ?
+    """, (limit,)).fetchall()
+    sessions = []
+    for r in rows:
+        preview = conn.execute(
+            "SELECT message_data FROM chat_messages WHERE session_id = ? ORDER BY id LIMIT 1",
+            (r["session_id"],),
+        ).fetchone()
+        first_text = ""
+        if preview:
+            try:
+                d = json.loads(preview["message_data"])
+                first_text = d.get("content", "")[:80]
+            except Exception:
+                pass
+        sessions.append({
+            "session_id": r["session_id"],
+            "created_at": r["created_at"],
+            "last_activity": r["last_activity"],
+            "message_count": r["message_count"],
+            "preview": first_text,
+        })
+    return sessions
 
 
 def get_worker_month_production(worker_id: int, year: int, month: int) -> list[dict]:
@@ -500,9 +609,12 @@ def insert_worker_history(worker_id: int, year: int, month: int, product_id: int
     conn = get_db()
     try:
         cursor = conn.execute(
-            """INSERT OR IGNORE INTO worker_monthly_history
+            """INSERT INTO worker_monthly_history
                (worker_id, year, month, product_id, total_quantity, gross_amount)
-               VALUES (?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?)
+               ON CONFLICT(worker_id, year, month, product_id)
+               DO UPDATE SET total_quantity = excluded.total_quantity,
+                             gross_amount = excluded.gross_amount""",
             (worker_id, year, month, product_id, total_quantity, gross_amount),
         )
         conn.commit()
@@ -587,9 +699,12 @@ def backfill_history(year: int | None = None, month: int | None = None) -> dict:
     conn.commit()
 
     from tools.export_tools import generate_worker_excel
-    for (y, m) in archived_months:
+    total_files = len(archived_months) * len(workers)
+    for idx, (y, m) in enumerate(archived_months):
         for w in workers:
+            print(f"  [Backfill {idx+1}/{len(archived_months)}] Generating {w['name']} {y}-{m:02d}...")
             generate_worker_excel(w["name"], y, m)
+    print(f"  Done: {total_files} Excel file(s) generated.")
 
     return {
         "status": "ok",

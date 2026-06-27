@@ -13,9 +13,6 @@ from tools.database import (
 
 VALID_PRODUCTS = {"NUT", "10*20", "6*25", "6*30", "10*25"}
 
-_pending_overwrites: dict[tuple[str, str, str], bool] = {}
-
-
 def get_product_info(code: str) -> Optional[dict]:
     conn = get_db()
     row = conn.execute("SELECT * FROM products WHERE code = ?", (code,)).fetchone()
@@ -61,16 +58,7 @@ def _record_single(worker: str, product_code: str, quantity: int, entry_date: Op
             (worker_id, product_id, entry_date),
         ).fetchone()
         if row:
-            key = (worker, product_code, entry_date)
-            if key in _pending_overwrites and _pending_overwrites[key]:
-                del _pending_overwrites[key]
-                db_update(row["id"], quantity)
-                return f"  {worker}: {quantity}x{product_code} (overwritten, was {row['quantity']})"
-            _pending_overwrites[key] = True
-            return (
-                f"  ⚠️ {worker} already has {row['quantity']}x{product_code} for {entry_date}.\n"
-                f"     Send same command again to overwrite."
-            )
+            return f"  {worker}: Already has {row['quantity']}x{product_code} for {entry_date}. Use update_entry to change."
         return f"  {worker}: Already exists"
 
 
@@ -199,14 +187,14 @@ def parse_table_to_production(worker: str, table_text: str) -> str:
         if in_table:
             if re.match(r'[├┼┤┬┌┐─═\s]+$', stripped):
                 continue
-            parts = [p.strip() for p in stripped.split("│") if p.strip()]
+            parts = [p.strip() for p in stripped.split("│")]
             if len(parts) >= 2:
                 data_lines.append(parts)
 
     if not header_line or not data_lines:
         return "Could not parse table — no header or data rows found."
 
-    header_parts = [p.strip() for p in header_line.split("│") if p.strip()]
+    header_parts = [p.strip() for p in header_line.split("│")]
     col_map = {}
     for i, h in enumerate(header_parts):
         h_upper = h.upper().replace("*", "").replace("×", "").replace("X", "")
@@ -252,14 +240,7 @@ def parse_table_to_production(worker: str, table_text: str) -> str:
                     (wid, pid["id"], iso_date),
                 ).fetchone()
                 if existing:
-                    key = (worker, product_code, iso_date)
-                    if key in _pending_overwrites and _pending_overwrites[key]:
-                        del _pending_overwrites[key]
-                        db_update(existing["id"], qty)
-                        date_results.append(f"{qty}x{product_code} (overwritten)")
-                    else:
-                        _pending_overwrites[key] = True
-                        date_results.append(f"{qty}x{product_code} (exists, resend to overwrite)")
+                    date_results.append(f"{qty}x{product_code} (exists, skipped)")
                 else:
                     date_results.append(f"{qty}x{product_code} (skipped)")
                 continue

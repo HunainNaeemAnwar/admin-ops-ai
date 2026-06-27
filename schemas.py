@@ -167,6 +167,7 @@ class EmailReportIn(BaseModel):
 
 class ChatIn(BaseModel):
     text: str = Field(..., min_length=1, max_length=2000)
+    session_id: str = Field(default="default", max_length=100)
 
 
 class ChatOut(BaseModel):

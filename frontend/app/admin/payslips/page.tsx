@@ -85,8 +85,6 @@ export default function PayslipsPage() {
   const allNames = [...new Set(data?.pdfs || [])]
   const allWorkers = allNames.map((n) => ({ key: n, ...parsePayslipName(n) }))
 
-  const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000"
-
   return (
     <div className="space-y-4">
       <h1 className="text-xl font-bold sm:text-2xl" style={{ color: "var(--color-foreground)" }}>
@@ -187,7 +185,7 @@ export default function PayslipsPage() {
                       <td className="px-4 py-3 text-center">
                         {hasPdf ? (
                           <a
-                            href={`${backendUrl}/admin/payslip/pdf/${p.worker}/${p.year}/${p.month}`}
+                            href={`/admin/payslip/pdf/${p.worker}/${p.year}/${p.month}`}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="inline-flex items-center gap-1 rounded-md px-3 py-1 text-xs font-medium transition-colors"
