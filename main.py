@@ -63,7 +63,7 @@ def main():
         from fastapi import FastAPI
         from fastapi.middleware.cors import CORSMiddleware
         from fastapi.staticfiles import StaticFiles
-        from web_ui.middleware import (
+        from api.middleware.middleware import (
             RateLimitMiddleware, RateLimiter,
             CorrelationIDMiddleware,
             register_shutdown_hook, setup_signal_handlers,
@@ -95,13 +95,13 @@ def main():
             allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
             allow_headers=["Content-Type"],
         )
-        app.mount("/static", StaticFiles(directory="web_ui/static"), name="static")
+        app.mount("/static", StaticFiles(directory="api/static"), name="static")
 
-        from web_ui.routes import router, admin_router
+        from api.routes.routes import router, admin_router
         app.include_router(router)
         app.include_router(admin_router)
 
-        from web_ui.middleware import (
+        from api.middleware.middleware import (
             global_validation_error_handler, global_http_error_handler,
             global_unhandled_error_handler, MaxBodySizeMiddleware,
         )

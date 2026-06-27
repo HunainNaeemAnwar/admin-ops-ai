@@ -4,7 +4,7 @@ import re
 from datetime import date
 from typing import Optional
 
-import agent_system.provider
+import ai.provider
 
 from openai import RateLimitError, APIStatusError
 from openai.types.responses import ResponseTextDeltaEvent
@@ -12,13 +12,12 @@ from agents import Agent, Runner, function_tool, handoff, ModelSettings, Guardra
 from agents.run_config import RunConfig
 from agents.run_error_handlers import RunErrorHandlerResult
 from config import FIXED_WORKERS, TAX_PERCENTAGE, FALLBACK_MODELS, ROUTER_MODEL
-from agent_system.provider import ACTIVE_MODEL, get_model_by_name
+from ai.provider import ACTIVE_MODEL, get_model_by_name
 from tools.bus import (
     record_production_batch, mark_worker_absent, mark_all_workers_absent,
     update_production_entry, parse_table, get_date_status,
     get_production_summary, get_catalog, record_rejection,
     record_worker_advance, get_rejection_distribution,
-    generate_worker_payslip, generate_payslip_files,
 )
 from tools.database import (
     get_active_workers, get_all_products, get_worker_id,
@@ -27,8 +26,9 @@ from tools.database import (
     get_payslip, save_payslip,
 )
 from tools.production_tools import get_product_info
-from agent_system.memory_manager import ConversationMemory
-from agent_system.cost_tracker import track_usage, format_session_cost
+from tools.payslip_tools import generate_pdf_payslip
+from ai.memory import ConversationMemory
+from ai.cost_tracker import track_usage, format_session_cost
 
 
 BASE_RUN_CONFIG = RunConfig(tool_not_found_behavior="return_error_to_model")
@@ -693,7 +693,7 @@ def generate_payslip_tool(year: int, month: int, worker: Optional[str] = None) -
             continue
 
         save_payslip(wid, y, m, gross_total, tax_amount, rejection_value, advance_total, net_payable)
-        generate_payslip_files(w, y, m)
+        generate_pdf_payslip(w, y, m)
 
         results.append(
             f"  {w}: {y}-{m:02d} payslip ready — "
@@ -819,7 +819,7 @@ async def chat(user_input: str, session_id: str = "default") -> str:
             await memory.session.add_items(saved)
             existing = saved
 
-    from agent_system.provider import _models as all_models
+    from ai.provider import _models as all_models
 
     fallback_chain = [m for m in FALLBACK_MODELS if m in all_models]
     if not fallback_chain:
@@ -916,7 +916,7 @@ async def stream_chat(user_input: str, session_id: str = "default"):
         if saved:
             await memory.session.add_items(saved)
 
-    from agent_system.provider import _models as all_models
+    from ai.provider import _models as all_models
 
     fallback_chain = [m for m in FALLBACK_MODELS if m in all_models]
     if not fallback_chain:
