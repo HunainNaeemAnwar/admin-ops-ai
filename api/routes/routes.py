@@ -518,7 +518,7 @@ async def admin_add_advance(data: AdvanceIn, user: CurrentUser, request: Request
 async def admin_generate_payslip(data: PayslipIn, user: CurrentUser, request: Request) -> ActionOut:
     require_father(user)
     require_csrf(request)
-    from ai.orchestrator.agent import generate_payslip_tool
+    from my_agents.orchestrator.agent import generate_payslip_tool
     result = generate_payslip_tool(data.year, data.month, data.worker or None)
     return ActionOut(message=result)
 
@@ -566,7 +566,7 @@ async def admin_send_email_report(data: EmailReportIn, user: CurrentUser, reques
 async def admin_agent_chat(data: ChatIn, user: CurrentUser, request: Request) -> ChatOut:
     require_father(user)
     require_csrf(request)
-    from ai.orchestrator.agent import chat
+    from my_agents.orchestrator.agent import chat
     result = await chat(data.text)
     return ChatOut(response=result)
 
@@ -575,7 +575,7 @@ async def admin_agent_chat(data: ChatIn, user: CurrentUser, request: Request) ->
 async def admin_agent_chat_stream(data: ChatIn, user: CurrentUser, request: Request) -> StreamingResponse:
     require_father(user)
     require_csrf(request)
-    from ai.orchestrator.agent import stream_chat
+    from my_agents.orchestrator.agent import stream_chat
     return StreamingResponse(
         stream_chat(data.text, session_id=data.session_id),
         media_type="text/event-stream",
@@ -607,7 +607,7 @@ async def admin_chat_session_detail(session_id: str, user: CurrentUser) -> list:
 async def admin_chat_session_delete(session_id: str, user: CurrentUser, request: Request) -> dict:
     require_father(user)
     require_csrf(request)
-    from ai.orchestrator.agent import _remove_memory
+    from my_agents.orchestrator.agent import _remove_memory
     await _remove_memory(session_id)
     return {"status": "deleted"}
 
@@ -616,7 +616,7 @@ async def admin_chat_session_delete(session_id: str, user: CurrentUser, request:
 async def admin_chat_session_forget(session_id: str, user: CurrentUser, request: Request) -> dict:
     require_father(user)
     require_csrf(request)
-    from ai.orchestrator.agent import _forget_memory
+    from my_agents.orchestrator.agent import _forget_memory
     await _forget_memory(session_id)
     return {"status": "forgotten"}
 

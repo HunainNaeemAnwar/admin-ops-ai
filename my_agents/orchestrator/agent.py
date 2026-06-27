@@ -4,7 +4,7 @@ import re
 from datetime import date
 from typing import Optional
 
-import ai.provider
+import my_agents.provider
 
 from openai import RateLimitError, APIStatusError
 from openai.types.responses import ResponseTextDeltaEvent
@@ -12,7 +12,7 @@ from agents import Agent, Runner, function_tool, handoff, ModelSettings, Guardra
 from agents.run_config import RunConfig
 from agents.run_error_handlers import RunErrorHandlerResult
 from config import FIXED_WORKERS, TAX_PERCENTAGE, FALLBACK_MODELS, ROUTER_MODEL
-from ai.provider import ACTIVE_MODEL, get_model_by_name
+from my_agents.provider import ACTIVE_MODEL, get_model_by_name
 from tools.bus import (
     record_production_batch, mark_worker_absent, mark_all_workers_absent,
     update_production_entry, parse_table, get_date_status,
@@ -27,8 +27,8 @@ from tools.database import (
 )
 from tools.production_tools import get_product_info
 from tools.payslip_tools import generate_pdf_payslip
-from ai.memory import ConversationMemory
-from ai.cost_tracker import track_usage, format_session_cost
+from my_agents.memory import ConversationMemory
+from my_agents.cost_tracker import track_usage, format_session_cost
 
 
 BASE_RUN_CONFIG = RunConfig(tool_not_found_behavior="return_error_to_model")
@@ -819,7 +819,7 @@ async def chat(user_input: str, session_id: str = "default") -> str:
             await memory.session.add_items(saved)
             existing = saved
 
-    from ai.provider import _models as all_models
+    from my_agents.provider import _models as all_models
 
     fallback_chain = [m for m in FALLBACK_MODELS if m in all_models]
     if not fallback_chain:
@@ -916,7 +916,7 @@ async def stream_chat(user_input: str, session_id: str = "default"):
         if saved:
             await memory.session.add_items(saved)
 
-    from ai.provider import _models as all_models
+    from my_agents.provider import _models as all_models
 
     fallback_chain = [m for m in FALLBACK_MODELS if m in all_models]
     if not fallback_chain:
