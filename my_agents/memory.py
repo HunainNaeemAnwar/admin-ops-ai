@@ -12,17 +12,17 @@ class ConversationMemory:
 
     @staticmethod
     def load_from_db(session_id: str) -> list:
-        from tools.database import load_chat_messages
+        from services.database import load_chat_messages
         return load_chat_messages(session_id)
 
     @staticmethod
     def save_to_db(session_id: str, messages: list):
-        from tools.database import save_chat_messages
+        from services.database import save_chat_messages
         save_chat_messages(session_id, messages)
 
     @staticmethod
     def delete_from_db(session_id: str):
-        from tools.database import delete_chat_messages
+        from services.database import delete_chat_messages
         delete_chat_messages(session_id)
 
     def __init__(self, session_id: str):

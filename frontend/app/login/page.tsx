@@ -7,10 +7,23 @@ import { ThemeToggle } from "@/components/theme-toggle"
 function LoginContent() {
   const searchParams = useSearchParams()
   const expired = searchParams.get("expired")
+  const errorAuth = searchParams.get("error")
 
   return (
     <div className="flex min-h-dvh items-center justify-center px-4" style={{ background: "var(--color-bg)" }}>
       <div className="w-full max-w-sm">
+        {errorAuth === "unauthorized" && (
+          <div
+            className="mb-4 rounded-md border px-4 py-3 text-sm"
+            style={{
+              borderColor: "var(--color-error)",
+              background: "rgba(239, 68, 68, 0.1)",
+              color: "var(--color-error)",
+            }}
+          >
+            This email is not authorized for admin access.
+          </div>
+        )}
         {expired && (
           <div
             className="mb-4 rounded-md border px-4 py-3 text-sm"

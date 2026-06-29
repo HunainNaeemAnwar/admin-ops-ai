@@ -14,7 +14,7 @@ os.environ["FATHER_EMAIL"] = "father@test.com"
 
 import config
 from config import FIXED_WORKERS
-from tools.database import get_db, init_db
+from services.database import get_db, init_db
 
 
 def seed_test_db():
@@ -42,7 +42,7 @@ seed_test_db()
 
 
 def clear_tables():
-    from tools.cache import invalidate_all
+    from services.cache import invalidate_all
     invalidate_all()
     conn = get_db()
     for table in ["daily_log", "rejections", "advances", "payslips"]:

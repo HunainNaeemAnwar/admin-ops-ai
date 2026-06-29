@@ -1,5 +1,5 @@
-from tools.report_tools import get_daily_status, get_summary
-from tools.production_tools import log_production_json, mark_absent
+from services.report_tools import get_daily_status, get_summary
+from services.production_tools import log_production_json, mark_absent
 
 
 class TestGetDailyStatus:

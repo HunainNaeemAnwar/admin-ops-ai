@@ -21,7 +21,7 @@ export default function AdminLayout({
     if (!loading && !user?.authenticated) {
       router.replace("/login?expired=true")
     }
-    if (!loading && user?.authenticated && !user?.is_father) {
+    if (!loading && user?.authenticated && !user?.is_admin) {
       router.replace("/")
     }
   }, [loading, user, router])
@@ -34,7 +34,7 @@ export default function AdminLayout({
     )
   }
 
-  if (!user?.is_father) {
+  if (!user?.is_admin) {
     return null
   }
 

@@ -1,4 +1,4 @@
-from tools.database import (
+from services.database import (
     get_db, get_worker_id, get_or_create_worker, get_all_workers, get_active_workers,
     get_product_id, get_all_products, get_product_rate,
     log_production, mark_absent, update_entry, get_logs_for_date,

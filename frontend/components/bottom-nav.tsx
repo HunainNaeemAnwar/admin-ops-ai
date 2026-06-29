@@ -5,7 +5,7 @@ import { usePathname, useRouter } from "next/navigation"
 import { useEffect, useState } from "react"
 import { LayoutDashboard, FileBarChart, Users, Receipt, Settings, X, Sun, Moon, LogOut } from "lucide-react"
 import { useTheme } from "@/lib/theme-context"
-import { fetchApi } from "@/lib/api"
+import { fetchApi, clearAuthToken } from "@/lib/api"
 
 const tabs = [
   { href: "/admin", icon: LayoutDashboard, label: "Home" },
@@ -34,6 +34,7 @@ export function BottomNav() {
     try {
       await fetchApi("/api/auth/logout", { method: "POST" })
     } catch { /* ignore */ }
+    clearAuthToken()
     router.push("/login")
   }
 

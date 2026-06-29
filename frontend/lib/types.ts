@@ -53,8 +53,9 @@ export interface MonthlyReport {
 
 export interface AuthUser {
   email: string
-  is_father: boolean
+  is_admin: boolean
   authenticated: boolean
+  token?: string
 }
 
 export interface ArchiveCheck {

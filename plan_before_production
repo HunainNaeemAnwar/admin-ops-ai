@@ -1,0 +1,204 @@
+# Production Deployment Plan — Admin Ops AI
+
+## Architecture
+
+┌──────────────────────────────────────────────┐
+│ Vercel (Frontend)                            │
+│ https://yourapp.vercel.app                   │
+│                                              │
+│ Next.js App + middleware.ts                  │
+│ Rewrite /api/* → Render Backend              │
+│ Rewrite /admin/* → Render Backend            │
+└──────────────┬───────────────────────────────┘
+               │ proxy (server-to-server)
+               ▼
+┌──────────────────────────────────────────────┐
+│ Render (Backend)                             │
+│ https://api.yourapp.onrender.com             │
+│                                              │
+│ FastAPI + PostgreSQL                         │
+│ Google OAuth callback                        │
+│ Gmail API (email)                            │
+│ LLM agents (Cerebras/Gemini)                 │
+└──────────────────────────────────────────────┘
+
+Key: Vercel proxy server-to-server hota hai, isliye httpOnly cookies
+     forward hoti hain (browser restriction nahi).
+
+---
+
+## Files to Change (11 files)
+
+### 1. config/__init__.py
+  - APP_ENV (dev/production) already added
+  - BACKEND_URL already added
+  - No changes needed
+
+### 2. pyproject.toml
+  Add deps:
+  - psycopg2-binary>=2.9.9
+  - asyncpg>=0.30.0
+
+### 3. services/database.py — PostgreSQL adapter
+  Current: sqlite3.connect() hardcoded
+  New: Auto-detect via DATABASE_URL prefix
+    sqlite:// → sqlite3 threading-local
+    postgresql:// → psycopg2 connection pool
+
+  Functions to refactor:
+  - get_db()
+  - init_db() — SQLite: AUTOINCREMENT, PostgreSQL: SERIAL/BIGSERIAL
+  - close_db()
+  - cleanup_expired_sessions (PostgreSQL: NOW() vs datetime('now'))
+  - All query methods stay unchanged (parameterized SQL works for both)
+
+### 4. api/routes/auth.py — httpOnly cookie
+  Backend cookie set kare with proper flags:
+  - httponly=True
+  - secure=True (agar APP_ENV=production)
+  - samesite="strict"
+  - path="/"
+
+  Dev mode: localStorage + X-Auth-Token header continue
+  Production: httpOnly cookie preferred
+
+### 5. api/main.py — Production CORS + OAUTHLIB
+  CORS allow_origins:
+    ["http://localhost:3000", "https://yourapp.vercel.app"]
+
+  OAUTHLIB_INSECURE_TRANSPORT sirf APP_ENV=dev mein set karo
+
+### 6. api/routes/common.py — CSRF origins
+  ALLOWED_ORIGINS:
+    http://localhost:3000
+    https://yourapp.vercel.app
+
+### 7. frontend/next.config.ts
+  Remove allowedDevOrigins
+  BACKEND_URL env var = Render URL in production
+
+### 8. frontend/middleware.ts — NEW
+  Route guard:
+    /admin/:path* — cookie check, redirect /login if missing
+  CSP headers:
+    default-src 'self'
+    script-src 'self'
+    style-src 'self' 'unsafe-inline'
+    connect-src 'self' https://api.yourapp.onrender.com
+    img-src 'self' data:
+
+### 9. frontend/lib/api.ts
+  Dev: X-Auth-Token header (localStorage)
+  Production: credentials: "include" only (httpOnly cookie)
+
+### 10. frontend/lib/auth.tsx
+  Simplify — remove localStorage token management
+  AuthProvider fetches /api/auth/me via cookie
+
+### 11. frontend/app/auth/callback/page.tsx
+  Remove setAuthToken — backend already set cookie via 303 redirect
+
+---
+
+## Database: SQLite → PostgreSQL Migration
+
+### Schema differences
+
+| SQLite | PostgreSQL |
+|--------|-----------|
+| INTEGER PRIMARY KEY AUTOINCREMENT | BIGSERIAL PRIMARY KEY |
+| datetime('now') | NOW() |
+| TEXT for dates | TIMESTAMP |
+| 0/1 for boolean | BOOLEAN |
+| json.loads() on TEXT | JSONB type |
+
+### Migration strategy
+  1. Render PostgreSQL provision karo
+  2. Seed command (python -m api.main seed) PostgreSQL pe chalega
+  3. Daily data migrate karne ka script likho
+  4. Switch DATABASE_URL → postgresql://... restart
+
+---
+
+## Infrastructure Setup (Render + Vercel)
+
+### Google Cloud Console
+  - Production redirect URI add karo:
+    https://api.yourapp.onrender.com/oauth/callback
+
+### Render (Backend)
+  Plan: Web Service ($7-15/mo)
+  Build Command: uv sync
+  Start Command: uv run python -m api.main web
+  Environment variables: all from .env.example (production section)
+
+### Vercel (Frontend)
+  Plan: Hobby (free)
+  Framework: Next.js
+  Root Directory: frontend/
+  Build Command: npm run build
+  Environment variables:
+    BACKEND_URL=https://api.yourapp.onrender.com
+    FRONTEND_URL=https://yourapp.vercel.app
+
+### PostgreSQL (Neon)
+  Plan: Free tier (0.5GB)
+  Create via Render dashboard → Managed Database → PostgreSQL
+
+---
+
+## Deployment Steps (Sequenced)
+
+### Phase 1: Code Changes (do this now)
+  [ ] pyproject.toml — add psycopg2-binary, asyncpg
+  [ ] services/database.py — PostgreSQL adapter
+  [ ] api/routes/auth.py — httpOnly cookie
+  [ ] api/main.py — production CORS
+  [ ] api/routes/common.py — CSRF origins
+  [ ] frontend/middleware.ts — guard + CSP
+  [ ] frontend/lib/api.ts — split dev/prod auth
+  [ ] frontend/lib/auth.tsx — simplify
+  [ ] frontend/app/auth/callback/page.tsx — simplify
+  [ ] frontend/next.config.ts — cleanup
+
+### Phase 2: Infra Setup (during deployment)
+  [ ] Google Cloud Console — add production redirect URI
+  [ ] Render — create Web Service + PostgreSQL
+  [ ] Vercel — connect repo, set env vars
+  [ ] Domain — DNS config (optional)
+
+### Phase 3: Deploy
+  [ ] Deploy backend → Render (verify API works)
+  [ ] Run seed on Render PostgreSQL
+  [ ] Deploy frontend → Vercel
+  [ ] Test OAuth login flow
+  [ ] Test admin dashboard features
+  [ ] Test email reports (Gmail API)
+  [ ] Test LLM agent chat (Cerebras/Gemini)
+
+### Phase 4: Verify
+  [ ] Login → admin dashboard → data loads
+  [ ] Non-admin → "unauthorized" message
+  [ ] Logout → session revoke
+  [ ] Log in again → works
+  [ ] Rate limiting functional
+  [ ] CSRF protection active
+  [ ] Auth audit logs being written
+
+---
+
+## Key Design Decisions
+
+  - Dev: localStorage + X-Auth-Token (localhost fix)
+  - Production: httpOnly cookie (Vercel proxy forwards it)
+  - Backend accepts both Cookie and X-Auth-Token headers everywhere
+  - Frontend middleware.ts only checks cookie existence (not decryption)
+  - Full auth validation always happens at backend /api/auth/me
+
+## Rollback Plan
+
+  If production fails:
+  1. Revert to previous commit
+  2. Vercel: redeploy from git
+  3. Render: redeploy from git
+  4. DATABASE_URL → sqlite:// ... (only if PostgreSQL migration failed)

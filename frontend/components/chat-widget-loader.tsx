@@ -11,7 +11,7 @@ const ChatWidgetInner = dynamic(
 export function ChatWidgetLoader() {
   const { user } = useAuth()
 
-  if (!user?.is_father) return null
+  if (!user?.is_admin) return null
 
   return <ChatWidgetInner />
 }

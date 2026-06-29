@@ -14,7 +14,7 @@ import {
   ChevronRight,
 } from "lucide-react"
 import { useState } from "react"
-import { fetchApi } from "@/lib/api"
+import { fetchApi, clearAuthToken } from "@/lib/api"
 import { ThemeToggle } from "@/components/theme-toggle"
 
 const navItems = [
@@ -37,6 +37,7 @@ export function AdminSidebar() {
     } catch {
       // ignore
     }
+    clearAuthToken()
     router.push("/login")
   }
 

@@ -1,7 +1,7 @@
 import json
 import sqlite3
 
-from tools.production_tools import (
+from services.production_tools import (
     log_production_json, mark_absent, mark_all_absent,
     update_entry, calc_piece_rate, get_product_info,
 )
@@ -71,7 +71,7 @@ class TestLogProductionJson:
     def test_new_worker_auto_create(self):
         result = log_production_json('[{"worker":"NewGuy","product_code":"NUT","quantity":100}]')
         assert "NewGuy" in result
-        from tools.database import get_worker_id
+        from services.database import get_worker_id
         assert get_worker_id("NewGuy") is not None
 
 
@@ -83,7 +83,7 @@ class TestMarkAbsent:
         assert "2026-06-01" in result
 
     def test_mark_absent_already_exists(self):
-        from tools.database import get_db
+        from services.database import get_db
         mark_absent("Kaleem", "2026-06-01")
         result = mark_absent("Kaleem", "2026-06-01")
         assert "already" in result.lower()
@@ -101,7 +101,7 @@ class TestMarkAbsent:
 class TestUpdateEntry:
     def test_update_entry(self):
         log_production_json('[{"worker":"Kaleem","product_code":"NUT","quantity":300}]')
-        from tools.database import get_logs_for_date
+        from services.database import get_logs_for_date
         from datetime import date
         logs = get_logs_for_date(date.today().isoformat())
         eid = logs[0]["id"]
@@ -116,7 +116,7 @@ class TestUpdateEntry:
 
     def test_update_entry_no_reason(self):
         log_production_json('[{"worker":"Kaleem","product_code":"NUT","quantity":300}]')
-        from tools.database import get_logs_for_date
+        from services.database import get_logs_for_date
         from datetime import date
         logs = get_logs_for_date(date.today().isoformat())
         eid = logs[0]["id"]

@@ -1,5 +1,5 @@
-from tools.rejection_tools import log_rejection, get_distribution_for_month
-from tools.advance_tools import record_advance, get_advances_summary
+from services.rejection_tools import log_rejection, get_distribution_for_month
+from services.advance_tools import record_advance, get_advances_summary
 
 
 class TestLogRejection:
@@ -68,7 +68,7 @@ class TestRecordAdvance:
     def test_advance_total_tracking(self):
         record_advance("Kaleem", 3000, 2026, 6)
         record_advance("Kaleem", 2000, 2026, 6)
-        from tools.database import get_total_advances_for_worker_month, get_worker_id
+        from services.database import get_total_advances_for_worker_month, get_worker_id
         wid = get_worker_id("Kaleem")
         total = get_total_advances_for_worker_month(wid, 2026, 6)
         assert total == 5000.0
