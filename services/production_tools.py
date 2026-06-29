@@ -156,14 +156,11 @@ def mark_absent(worker: str, entry_date: Optional[str] = None, reason: str = "")
     if entry_date is None:
         entry_date = date.today().isoformat()
     worker_id = get_or_create_worker(worker)
-    try:
-        db_mark_absent(worker_id, entry_date, reason)
-        msg = f"Marked {worker} absent for {entry_date}"
-        if reason:
-            msg += f" ({reason})"
-        return msg
-    except sqlite3.IntegrityError:
-        return f"{worker} already has an entry for {entry_date}"
+    db_mark_absent(worker_id, entry_date, reason)
+    msg = f"Marked {worker} absent for {entry_date}"
+    if reason:
+        msg += f" ({reason})"
+    return msg
 
 
 def mark_all_absent(entry_date: Optional[str] = None, reason: str = "") -> str:
@@ -172,11 +169,8 @@ def mark_all_absent(entry_date: Optional[str] = None, reason: str = "") -> str:
     workers = get_active_workers()
     results = []
     for w in workers:
-        try:
-            db_mark_absent(w["id"], entry_date, reason)
-            results.append(w["name"])
-        except sqlite3.IntegrityError:
-            pass
+        db_mark_absent(w["id"], entry_date, reason)
+        results.append(w["name"])
     if results:
         msg = f"Marked absent: {', '.join(results)}"
         if reason:

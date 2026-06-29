@@ -88,7 +88,10 @@ export default function AdminOverviewPage() {
   }
 
   const workersPresent = data
-    ? new Set(data.entries.map((e) => e.worker_name)).size
+    ? new Set(data.entries.filter((e) => e.status === "present").map((e) => e.worker_name)).size
+    : 0
+  const absentWorkers = data
+    ? new Set(data.entries.filter((e) => e.status === "absent").map((e) => e.worker_name)).size
     : 0
   const missingWorkers = WORKERS.filter(
     (w) => !data?.entries.some((e) => e.worker_name === w)
@@ -127,11 +130,12 @@ export default function AdminOverviewPage() {
 
         <div style={{ background: statBg, border: `1px solid ${border}` }} className="rounded-xl px-4 py-3">
           <div className="flex items-center gap-2 mb-1">
-            <AlertTriangle size={14} style={{ color: missingWorkers.length > 0 ? "#DC2626" : muted }} />
-            <span className="text-[11px] font-medium uppercase tracking-wide" style={{ color: muted }}>Missing</span>
+            <AlertTriangle size={14} style={{ color: absentWorkers + missingWorkers.length > 0 ? "#DC2626" : muted }} />
+            <span className="text-[11px] font-medium uppercase tracking-wide" style={{ color: muted }}>Absent</span>
           </div>
-          <p className="text-2xl font-bold tabular-nums" style={{ color: missingWorkers.length > 0 ? "#DC2626" : text }}>
-            {missingWorkers.length}
+          <p className="text-2xl font-bold tabular-nums" style={{ color: absentWorkers + missingWorkers.length > 0 ? "#DC2626" : text }}>
+            {absentWorkers}
+            {missingWorkers.length > 0 && <span className="text-sm font-normal" style={{ color: muted }}> +{missingWorkers.length}</span>}
           </p>
         </div>
       </div>
@@ -158,6 +162,29 @@ export default function AdminOverviewPage() {
                 </div>
               )
             })}
+          </div>
+        </div>
+      )}
+
+      {/* Absent Workers */}
+      {absentWorkers > 0 && (
+        <div
+          className="rounded-xl px-4 py-3"
+          style={{ background: dangerBg, border: `1px solid ${dangerBorder}` }}
+        >
+          <p className="text-xs font-semibold mb-2" style={{ color: "#DC2626" }}>
+            On leave today
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {[...new Set(data?.entries.filter((e) => e.status === "absent").map((e) => e.worker_name))].map((w) => (
+              <span
+                key={w}
+                className="rounded-md px-2.5 py-1 text-xs font-medium"
+                style={{ background: missingTagBg, color: missingTagText }}
+              >
+                {w}
+              </span>
+            ))}
           </div>
         </div>
       )}

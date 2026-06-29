@@ -178,6 +178,31 @@ body {
   color: var(--color-on-primary);
 }
 
+/* ── Tables ── */
+table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+th, td {
+  padding: 6px 10px;
+  text-align: left;
+  border: 1px solid var(--color-border);
+}
+
+th {
+  font-weight: 600;
+  background: var(--color-surface-alt);
+}
+
+tr:nth-child(even) {
+  background: var(--color-table-stripe);
+}
+
+tr:hover {
+  background: var(--color-table-hover);
+}
+
 /* ── Card Hover Effect ── */
 .card-hover {
   transition: box-shadow 0.2s ease, transform 0.2s ease;

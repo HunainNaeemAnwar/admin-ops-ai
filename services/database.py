@@ -9,6 +9,10 @@ from config import DATABASE_URL
 from services.cache import cached_workers, cached_products
 
 _local = threading.local()
+_memory_local = threading.local()
+
+MEMORY_DB_DIR = Path("data/agent_memory")
+MEMORY_DB = str(MEMORY_DB_DIR / "agent_memory.db")
 
 
 def _is_conn_alive(conn: sqlite3.Connection) -> bool:
@@ -29,12 +33,62 @@ def close_db():
 def get_db() -> sqlite3.Connection:
     conn = getattr(_local, "conn", None)
     if conn is None or not _is_conn_alive(conn):
-        conn = sqlite3.connect(DATABASE_URL)
+        conn = sqlite3.connect(DATABASE_URL, timeout=5)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA foreign_keys=ON")
         _local.conn = conn
     return conn
+
+
+def get_memory_db() -> sqlite3.Connection:
+    conn = getattr(_memory_local, "conn", None)
+    if conn is None or not _is_conn_alive(conn):
+        conn = sqlite3.connect(MEMORY_DB, timeout=10)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
+        _memory_local.conn = conn
+    return conn
+
+
+def init_memory_db():
+    MEMORY_DB_DIR.mkdir(parents=True, exist_ok=True)
+    conn = get_memory_db()
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS chat_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT NOT NULL,
+            message_data TEXT NOT NULL,
+            created_at TEXT DEFAULT (datetime('now'))
+        )
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_chat_messages_session
+            ON chat_messages(session_id, id)
+    """)
+    conn.commit()
+
+    row = conn.execute("SELECT COUNT(*) FROM chat_messages").fetchone()
+    if row and row[0] == 0:
+        try:
+            legacy = sqlite3.connect(DATABASE_URL, timeout=5)
+            has_table = legacy.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='chat_messages'"
+            ).fetchone()
+            if has_table:
+                rows = legacy.execute(
+                    "SELECT session_id, message_data, created_at FROM chat_messages"
+                ).fetchall()
+                if rows:
+                    conn.executemany(
+                        "INSERT INTO chat_messages (session_id, message_data, created_at) VALUES (?, ?, ?)",
+                        rows,
+                    )
+                    conn.commit()
+                    print(f"[DB] Migrated {len(rows)} chat messages to agent_memory.db")
+            legacy.close()
+        except Exception as e:
+            print(f"[DB] No legacy chat data to migrate: {e}")
 
 
 def init_db():
@@ -110,16 +164,6 @@ def init_db():
             FOREIGN KEY (worker_id) REFERENCES workers(id)
         );
 
-        CREATE TABLE IF NOT EXISTS chat_messages (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            session_id TEXT NOT NULL,
-            message_data TEXT NOT NULL,
-            created_at TEXT DEFAULT (datetime('now'))
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_chat_messages_session
-            ON chat_messages(session_id, id);
-
         CREATE TABLE IF NOT EXISTS worker_monthly_history (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             worker_id INTEGER NOT NULL,
@@ -140,8 +184,12 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_daily_log_date ON daily_log(entry_date);
         CREATE INDEX IF NOT EXISTS idx_daily_log_worker ON daily_log(worker_id);
         CREATE INDEX IF NOT EXISTS idx_daily_log_worker_date ON daily_log(worker_id, entry_date);
+        CREATE INDEX IF NOT EXISTS idx_daily_log_date_status ON daily_log(entry_date, status);
         CREATE INDEX IF NOT EXISTS idx_rejections_month ON rejections(year, month);
         CREATE INDEX IF NOT EXISTS idx_advances_worker_month ON advances(worker_id, year, month);
+        CREATE INDEX IF NOT EXISTS idx_advances_worker_month_amount ON advances(worker_id, year, month, amount);
+        CREATE INDEX IF NOT EXISTS idx_advances_month ON advances(year, month);
+        CREATE INDEX IF NOT EXISTS idx_history_year_month ON worker_monthly_history(year, month);
 
         CREATE TABLE IF NOT EXISTS sessions (
             id TEXT PRIMARY KEY,
@@ -255,7 +303,11 @@ def log_production(worker_id: int, product_id: int, quantity: int, entry_date: s
 
 def mark_absent(worker_id: int, entry_date: str, reason: str = "") -> int:
     conn = get_db()
-    try:
+    updated = conn.execute(
+        "UPDATE daily_log SET status = 'absent', reason = ? WHERE worker_id = ? AND entry_date = ?",
+        (reason, worker_id, entry_date),
+    ).rowcount
+    if updated == 0:
         cursor = conn.execute(
             """INSERT INTO daily_log (worker_id, product_id, quantity, entry_date, status, reason)
                VALUES (?, (SELECT id FROM products WHERE code = 'NUT'), 0, ?, 'absent', ?)""",
@@ -263,8 +315,8 @@ def mark_absent(worker_id: int, entry_date: str, reason: str = "") -> int:
         )
         conn.commit()
         return cursor.lastrowid
-    except sqlite3.IntegrityError:
-        raise
+    conn.commit()
+    return 0
 
 
 def update_entry(entry_id: int, quantity: int) -> bool:
@@ -283,7 +335,7 @@ def get_logs_for_date(entry_date: str) -> list[dict]:
     rows = conn.execute(
         """SELECT dl.id, dl.worker_id, w.name AS worker_name,
                   dl.product_id, p.code AS product_code, p.description,
-                  dl.quantity, dl.entry_date, dl.status, dl.created_at
+                  dl.quantity, dl.entry_date, dl.status, dl.reason, dl.created_at
            FROM daily_log dl
            JOIN workers w ON w.id = dl.worker_id
            JOIN products p ON p.id = dl.product_id
@@ -418,6 +470,19 @@ def get_total_advances_for_worker_month(worker_id: int, year: int, month: int) -
     return row["total"] if row else 0.0
 
 
+def get_all_advances_for_month(year: int, month: int) -> list[dict]:
+    conn = get_db()
+    rows = conn.execute(
+        """SELECT a.worker_id, w.name AS worker_name, a.amount, a.description, a.created_at
+           FROM advances a
+           JOIN workers w ON w.id = a.worker_id
+           WHERE a.year = ? AND a.month = ?
+           ORDER BY w.name, a.created_at""",
+        (year, month),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
 # ── Payslips ─────────────────────────────────────────
 
 def save_payslip(
@@ -463,6 +528,20 @@ def get_daily_totals(entry_date: str) -> dict:
     return {r["product_code"]: r["total_qty"] for r in rows}
 
 
+def get_date_range_totals(start_date: str, end_date: str) -> list[dict]:
+    conn = get_db()
+    rows = conn.execute(
+        """SELECT dl.entry_date, p.code AS product_code, SUM(dl.quantity) AS total_qty
+           FROM daily_log dl
+           JOIN products p ON p.id = dl.product_id
+           WHERE dl.entry_date BETWEEN ? AND ? AND dl.status = 'present'
+           GROUP BY dl.entry_date, p.code
+           ORDER BY dl.entry_date""",
+        (start_date, end_date),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def _extract_text(item: dict) -> str:
     content = item.get("content", "")
     if isinstance(content, str):
@@ -477,7 +556,7 @@ def _extract_text(item: dict) -> str:
 
 
 def load_chat_messages(session_id: str) -> list:
-    conn = get_db()
+    conn = get_memory_db()
     rows = conn.execute(
         "SELECT message_data FROM chat_messages WHERE session_id = ? ORDER BY id",
         (session_id,),
@@ -497,52 +576,66 @@ def load_chat_messages(session_id: str) -> list:
 def save_chat_messages(session_id: str, messages: list):
     if not messages:
         return
-    conn = get_db()
-    import json
-    conn.execute("DELETE FROM chat_messages WHERE session_id = ?", (session_id,))
-    for msg in messages:
-        if msg.get("role") in ("tool", "function"):
-            continue
-        if not msg.get("role"):
-            continue
-        if not _extract_text(msg):
-            continue
-        conn.execute(
-            "INSERT INTO chat_messages (session_id, message_data) VALUES (?, ?)",
-            (session_id, json.dumps(msg)),
-        )
-    conn.commit()
+    import json, time
+    for attempt in range(5):
+        try:
+            conn = get_memory_db()
+            conn.execute("DELETE FROM chat_messages WHERE session_id = ?", (session_id,))
+            for msg in messages:
+                if msg.get("role") in ("tool", "function"):
+                    continue
+                if not msg.get("role"):
+                    continue
+                if not _extract_text(msg):
+                    continue
+                conn.execute(
+                    "INSERT INTO chat_messages (session_id, message_data) VALUES (?, ?)",
+                    (session_id, json.dumps(msg)),
+                )
+            conn.commit()
+            return
+        except sqlite3.OperationalError as e:
+            if "locked" in str(e) and attempt < 4:
+                time.sleep(0.5)
+                continue
+            raise
 
 
 def delete_chat_messages(session_id: str):
-    conn = get_db()
+    conn = get_memory_db()
     conn.execute("DELETE FROM chat_messages WHERE session_id = ?", (session_id,))
     conn.commit()
+
+
+def delete_logs_for_date(entry_date: str) -> dict:
+    conn = get_db()
+    cur = conn.execute("DELETE FROM daily_log WHERE entry_date = ?", (entry_date,))
+    conn.commit()
+    return {"deleted_rows": cur.rowcount, "entry_date": entry_date}
 
 
 def list_chat_sessions(limit: int = 20) -> list[dict]:
     import json
-    conn = get_db()
+    conn = get_memory_db()
     rows = conn.execute("""
-        SELECT session_id,
-               MIN(created_at) as created_at,
-               MAX(created_at) as last_activity,
-               COUNT(*) as message_count
-        FROM chat_messages
-        GROUP BY session_id
+        SELECT cm.session_id,
+               MIN(cm.created_at) as created_at,
+               MAX(cm.created_at) as last_activity,
+               COUNT(*) as message_count,
+               (SELECT message_data FROM chat_messages
+                WHERE session_id = cm.session_id
+                ORDER BY id LIMIT 1) as preview
+        FROM chat_messages cm
+        GROUP BY cm.session_id
         ORDER BY last_activity DESC
         LIMIT ?
     """, (limit,)).fetchall()
     sessions = []
     for r in rows:
-        preview = conn.execute(
-            "SELECT message_data FROM chat_messages WHERE session_id = ? ORDER BY id LIMIT 1",
-            (r["session_id"],),
-        ).fetchone()
         first_text = ""
-        if preview:
+        if r["preview"]:
             try:
-                d = json.loads(preview["message_data"])
+                d = json.loads(r["preview"])
                 first_text = d.get("content", "")[:80]
             except Exception:
                 pass
@@ -568,6 +661,25 @@ def get_worker_month_production(worker_id: int, year: int, month: int) -> list[d
            WHERE dl.worker_id = ? AND dl.entry_date BETWEEN ? AND ? AND dl.status = 'present'
            ORDER BY dl.entry_date""",
         (worker_id, start, end),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_all_workers_month_production(year: int, month: int) -> list[dict]:
+    conn = get_db()
+    start = f"{year}-{month:02d}-01"
+    from calendar import monthrange
+    days = monthrange(year, month)[1]
+    end = f"{year}-{month:02d}-{days:02d}"
+    rows = conn.execute(
+        """SELECT dl.worker_id, w.name AS worker_name, p.code AS product_code, SUM(dl.quantity) AS total_qty
+           FROM daily_log dl
+           JOIN workers w ON w.id = dl.worker_id
+           JOIN products p ON p.id = dl.product_id
+           WHERE dl.entry_date BETWEEN ? AND ? AND dl.status = 'present'
+           GROUP BY dl.worker_id, p.code
+           ORDER BY w.name, p.code""",
+        (start, end),
     ).fetchall()
     return [dict(r) for r in rows]
 
@@ -728,14 +840,6 @@ def backfill_history(year: int | None = None, month: int | None = None) -> dict:
                     count += 1
         archived_months.add((y, m))
     conn.commit()
-
-    from services.export_tools import generate_worker_excel
-    total_files = len(archived_months) * len(workers)
-    for idx, (y, m) in enumerate(archived_months):
-        for w in workers:
-            print(f"  [Backfill {idx+1}/{len(archived_months)}] Generating {w['name']} {y}-{m:02d}...")
-            generate_worker_excel(w["name"], y, m)
-    print(f"  Done: {total_files} Excel file(s) generated.")
 
     return {
         "status": "ok",

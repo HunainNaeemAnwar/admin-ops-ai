@@ -3,7 +3,9 @@
 import { useState, useEffect, useRef, useCallback, type FormEvent } from "react"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
-import { ApiError } from "@/lib/api"
+import { ApiError, BACKEND_URL } from "@/lib/api"
+
+const apiUrl = (path: string) => BACKEND_URL + path
 import type { ChatMessage } from "@/lib/types"
 import { MessageCircle, X, Send, Loader2, History, Trash2 } from "lucide-react"
 
@@ -38,17 +40,35 @@ function saveLocalMessages(msgs: ChatMessage[]) {
   try { sessionStorage.setItem(MSG_KEY, JSON.stringify(msgs)) } catch {}
 }
 
+function fixTableNewlines(text: string): string {
+  return text
+    .replace(/\|\s*\n?\s*(?=\|)/g, "|\n")
+    .replace(/\n{3,}/g, "\n\n")
+}
+
 function MarkdownContent({ text }: { text: string }) {
-  const safe = String(text ?? "").replace(/(\d+)\*(\d+)/g, "`$1*$2`")
+  const safe = fixTableNewlines(String(text ?? "").replace(/(\d+)\*(\d+)/g, "$1\\*$2"))
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
       components={{
-        p: ({ children }) => <p className="my-1 last:mb-0">{children}</p>,
-        ul: ({ children }) => <ul className="list-disc pl-4 my-1 space-y-0.5">{children}</ul>,
-        ol: ({ children }) => <ol className="list-decimal pl-4 my-1 space-y-0.5">{children}</ol>,
+        p: ({ children }) => <p className="mb-2 last:mb-0 whitespace-pre-wrap">{children}</p>,
+        ul: ({ children }) => <ul className="list-disc pl-4 my-2 space-y-1">{children}</ul>,
+        ol: ({ children }) => <ol className="list-decimal pl-4 my-2 space-y-1">{children}</ol>,
         li: ({ children }) => <li>{children}</li>,
         strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
+        table: ({ children }) => (
+          <div className="overflow-x-auto my-2">
+            <table className="w-full text-xs border-collapse">{children}</table>
+          </div>
+        ),
+        th: ({ children }) => (
+          <th className="px-2 py-1.5 text-left font-semibold whitespace-nowrap">{children}</th>
+        ),
+        td: ({ children }) => (
+          <td className="px-2 py-1 whitespace-nowrap">{children}</td>
+        ),
+        tr: ({ children }) => <tr>{children}</tr>,
         code: ({ className, ...props }) => {
           const isInline = !className
           if (isInline) {
@@ -57,6 +77,7 @@ function MarkdownContent({ text }: { text: string }) {
           return <pre className="rounded-lg p-3 my-2 overflow-x-auto text-xs" style={{ background: "rgba(0,0,0,0.1)" }}><code {...props} /></pre>
         },
       }}
+      key={text}
     >{safe}</ReactMarkdown>
   )
 }
@@ -83,29 +104,12 @@ export function ChatWidget() {
   const inputRef = useRef<HTMLInputElement>(null)
   const abortRef = useRef<AbortController | null>(null)
 
-  // init: load local messages + fetch remote history for saved sid
+  // init: always start fresh session on page load
   useEffect(() => {
-    const local = loadLocalMessages()
-    const sid = getSid()
-    if (local.length > 0) {
-      setMessages(local)
-    } else if (sid !== "default") {
-      fetch(`/admin/chat/sessions/${sid}`, { credentials: "include" })
-        .then((r) => r.ok ? r.json() : [])
-        .then((data: { role: string; content: string }[]) => {
-          if (data.length > 0) {
-            const restored: ChatMessage[] = data.map((m, i) => ({
-              id: `hist-${i}`,
-              role: m.role as "user" | "assistant",
-              text: m.content,
-              timestamp: new Date(),
-            }))
-            setMessages(restored)
-            saveLocalMessages(restored)
-          }
-        })
-        .catch(() => {})
-    }
+    const sid = crypto.randomUUID()
+    setSid(sid)
+    setMessages([])
+    saveLocalMessages([])
   }, [])
 
   useEffect(() => { saveLocalMessages(messages) }, [messages])
@@ -128,7 +132,7 @@ export function ChatWidget() {
       abortRef.current = c
       const t = setTimeout(() => c.abort(), TIMEOUT_MS)
 
-      const r = await fetch(`/admin/chat/stream`, {
+      const r = await fetch(apiUrl(`/admin/chat/stream`), {
         method: "POST", credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text, session_id: getSid() }), signal: c.signal,
@@ -153,8 +157,15 @@ export function ChatWidget() {
 
         for (const line of lines) {
           if (!line.startsWith("data: ")) continue
-          const data = line.slice(6)
-          if (data === "[DONE]") break
+          const raw = line.slice(6)
+          let data: string
+          try {
+            data = JSON.parse(raw)
+            if (data === "[DONE]") break
+          } catch {
+            if (raw === "[DONE]") break
+            data = raw
+          }
           accumulated += data
           setMessages((p) => p.map((m) => m.id === msgId ? { ...m, text: accumulated } : m))
         }
@@ -177,7 +188,7 @@ export function ChatWidget() {
     setView("history")
     setSessionsLoading(true)
     try {
-      const r = await fetch(`/admin/chat/sessions`, { credentials: "include" })
+      const r = await fetch(apiUrl(`/admin/chat/sessions`), { credentials: "include" })
       if (r.ok) setSessions(await r.json())
     } catch {} finally { setSessionsLoading(false) }
   }, [])
@@ -189,9 +200,9 @@ export function ChatWidget() {
     try {
       // Clear backend cache for old session to prevent stale context
       if (oldSid !== sid && oldSid !== "default") {
-        fetch(`/admin/chat/sessions/${oldSid}/forget`, { method: "POST", credentials: "include" }).catch(() => {})
+        fetch(apiUrl(`/admin/chat/sessions/${oldSid}/forget`), { method: "POST", credentials: "include" }).catch(() => {})
       }
-      const r = await fetch(`/admin/chat/sessions/${sid}`, { credentials: "include" })
+      const r = await fetch(apiUrl(`/admin/chat/sessions/${sid}`), { credentials: "include" })
       if (r.ok) {
         const data: { role: string; content: string }[] = await r.json()
         const restored: ChatMessage[] = data.map((m, i) => ({
@@ -217,7 +228,7 @@ export function ChatWidget() {
   const deleteSession = useCallback(async (sid: string, e: React.MouseEvent) => {
     e.stopPropagation()
     try {
-      await fetch(`/admin/chat/sessions/${sid}`, {
+      await fetch(apiUrl(`/admin/chat/sessions/${sid}`), {
         method: "DELETE", credentials: "include",
       })
       setSessions((p) => p.filter((s) => s.session_id !== sid))
@@ -281,7 +292,7 @@ export function ChatWidget() {
                 style={{ background: primary, color: onPrimary }}
               >{m.text}</div>
             ) : (
-              <div className="max-w-[80%] rounded-xl px-3 py-2 text-sm leading-relaxed [&_*]:my-0"
+              <div className="max-w-[80%] rounded-xl px-3 py-2 text-sm leading-relaxed"
                 style={{ background: alt, color: fg }}
               >
                 {m.text ? <MarkdownContent text={m.text} /> : null}

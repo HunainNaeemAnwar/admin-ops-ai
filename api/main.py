@@ -53,6 +53,8 @@ def main():
     print_banner(mode)
 
     if mode == "seed":
+        from services.database import init_memory_db
+        init_memory_db()
         from config.seed import seed
         seed()
         print("Database seeded successfully.")
@@ -71,6 +73,9 @@ def main():
 
         @asynccontextmanager
         async def _warmup_lifespan(app):
+            from services.database import init_db, init_memory_db
+            init_db()
+            init_memory_db()
             try:
                 from openai import AsyncOpenAI
                 from config import CEREBRAS_API_KEY, DEFAULT_OPENAI_BASE_URL, CEREBRAS_MODEL

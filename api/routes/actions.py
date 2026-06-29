@@ -9,7 +9,7 @@ from services.production_tools import log_production_json
 from services.rejection_tools import log_rejection as rej_log
 from services.advance_tools import record_advance as adv_rec
 from services.email_tools import send_report
-from services.database import backfill_history
+from services.database import backfill_history, delete_logs_for_date
 
 actions_router = APIRouter()
 
@@ -67,3 +67,11 @@ async def admin_backfill(user: CurrentUser, request: Request) -> dict:
     require_admin(user)
     require_csrf(request)
     return backfill_history()
+
+
+@actions_router.delete("/date/{entry_date}")
+async def admin_delete_date(entry_date: str, user: CurrentUser, request: Request) -> ActionOut:
+    require_admin(user)
+    require_csrf(request)
+    result = delete_logs_for_date(entry_date)
+    return ActionOut(message=f"Deleted {result['deleted_rows']} entries for {entry_date}")

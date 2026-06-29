@@ -3,6 +3,7 @@
 import { useSearchParams } from "next/navigation"
 import { Suspense } from "react"
 import { ThemeToggle } from "@/components/theme-toggle"
+import { BACKEND_URL } from "@/lib/api"
 
 function LoginContent() {
   const searchParams = useSearchParams()
@@ -53,7 +54,7 @@ function LoginContent() {
             Sign in with your Google account to access the admin dashboard.
           </p>
           <a
-            href="/admin/login"
+            href={`${BACKEND_URL}/admin/login`}
             className="inline-flex w-full items-center justify-center rounded-md px-4 py-2.5 text-sm font-medium text-white transition-opacity min-h-[44px]"
             style={{ background: "var(--color-success)" }}
             onMouseEnter={(e) => e.currentTarget.style.opacity = "0.9"}

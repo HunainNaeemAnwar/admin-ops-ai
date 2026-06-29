@@ -98,7 +98,6 @@ def _check_auto_archive():
         return
     from services.database import get_active_workers, get_all_products, insert_worker_history
     from services.database import get_worker_daily_breakdown
-    from services.export_tools import generate_worker_excel_stream
     workers = get_active_workers()
     products = get_all_products()
     for w in workers:
@@ -115,4 +114,3 @@ def _check_auto_archive():
             if qty > 0:
                 gross = qty * p["rate"]
                 insert_worker_history(w["id"], prev_year, prev_month, p["id"], qty, gross)
-        generate_worker_excel_stream(w["name"], prev_year, prev_month)

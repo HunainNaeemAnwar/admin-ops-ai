@@ -13,7 +13,7 @@ from googleapiclient.errors import HttpError
 from config import MANAGER_EMAIL
 from services.oauth_tools import get_valid_credentials, list_authorized_users
 from services.database import get_daily_totals, get_all_products
-from services.export_tools import generate_excel_report, generate_monthly_excel_stream
+from services.export_tools import generate_weekly_excel_stream, generate_monthly_excel_stream
 
 
 def _gmail_service(email: str):
@@ -220,9 +220,11 @@ def send_report(period: str, year: int, month: int, day: int) -> str:
         return send_email(from_email, MANAGER_EMAIL, subject, html_body,
                           attachment_bytes=buf, attachment_filename=filename, is_html=True)
     elif period == "weekly":
-        attachment_path = generate_excel_report(period, year, month, day)
+        buf, filename = generate_weekly_excel_stream(year, month, day)
         return send_email(from_email, MANAGER_EMAIL, subject, html_body,
-                          attachment_path=attachment_path, is_html=True)
+                          attachment_bytes=buf, attachment_filename=filename, is_html=True)
+    elif period == "daily":
+        return send_email(from_email, MANAGER_EMAIL, subject, html_body, is_html=True)
 
     return send_email(from_email, MANAGER_EMAIL, subject, html_body, is_html=True)
 

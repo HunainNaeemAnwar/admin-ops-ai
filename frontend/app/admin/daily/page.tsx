@@ -7,7 +7,10 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Card } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Avatar } from "@/components/ui/avatar"
-import { Calendar } from "lucide-react"
+import { Button } from "@/components/ui/button"
+import { Toast } from "@/components/ui/toast"
+import { ConfirmModal } from "@/components/ui/confirm-modal"
+import { Calendar, Trash2 } from "lucide-react"
 
 export default function DailyReportPage() {
   const [dateStr, setDateStr] = useState(() => {
@@ -17,6 +20,9 @@ export default function DailyReportPage() {
   const [data, setData] = useState<DailyReport | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [showDeleteModal, setShowDeleteModal] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null)
 
   const fetchData = useCallback(async () => {
     setLoading(true)
@@ -43,6 +49,20 @@ export default function DailyReportPage() {
     setDateStr(
       `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`
     )
+  }
+
+  const handleDelete = async () => {
+    setDeleting(true)
+    try {
+      await fetchApi(`/admin/date/${dateStr}`, { method: "DELETE" })
+      setToast({ message: `Data for ${dateStr} deleted.`, type: "success" })
+      setShowDeleteModal(false)
+      fetchData()
+    } catch {
+      setToast({ message: "Failed to delete data.", type: "error" })
+    } finally {
+      setDeleting(false)
+    }
   }
 
   if (loading) {
@@ -111,6 +131,15 @@ export default function DailyReportPage() {
           <Calendar size={16} />
           Today
         </button>
+        {data && data.entries.length > 0 && (
+          <Button
+            variant="danger"
+            onClick={() => setShowDeleteModal(true)}
+          >
+            <Trash2 size={16} />
+            Delete Day
+          </Button>
+        )}
       </div>
 
       {!data || data.entries.length === 0 ? (
@@ -187,6 +216,26 @@ export default function DailyReportPage() {
           </Card>
         </>
       )}
+
+      {toast && (
+        <Toast
+          message={toast.message}
+          type={toast.type}
+          onDismiss={() => setToast(null)}
+        />
+      )}
+
+      <ConfirmModal
+        open={showDeleteModal}
+        title="Delete Day's Data"
+        message={`This will permanently delete ALL production entries for ${dateStr}. Workers can be marked absent or production re-entered after deletion. This action cannot be undone.`}
+        confirmLabel="Delete Forever"
+        countdown={3}
+        variant="danger"
+        onConfirm={handleDelete}
+        onCancel={() => setShowDeleteModal(false)}
+        loading={deleting}
+      />
     </div>
   )
 }

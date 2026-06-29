@@ -17,19 +17,32 @@ import base64
 
 from config import (
     GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, GMAIL_SCOPES,
-    TOKEN_DIR,
+    TOKEN_DIR, DATA_DIR,
 )
 
 _fernet_key: Optional[bytes] = None
+FERNET_KEY_FILE = DATA_DIR / ".fernet_key"
 
 
 def _get_fernet() -> Fernet:
     global _fernet_key
-    if _fernet_key is None:
-        from config import FERNET_SECRET
-        secret = FERNET_SECRET or GMAIL_CLIENT_SECRET
-        raw = hashlib.sha256(secret.encode()).digest()
+    if _fernet_key is not None:
+        return Fernet(_fernet_key)
+
+    from config import FERNET_SECRET
+    if FERNET_SECRET:
+        raw = hashlib.sha256(FERNET_SECRET.encode()).digest()
         _fernet_key = base64.urlsafe_b64encode(raw)
+        return Fernet(_fernet_key)
+
+    if FERNET_KEY_FILE.exists():
+        _fernet_key = FERNET_KEY_FILE.read_bytes()
+        return Fernet(_fernet_key)
+
+    key = Fernet.generate_key()
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    FERNET_KEY_FILE.write_bytes(key)
+    _fernet_key = key
     return Fernet(_fernet_key)
 
 

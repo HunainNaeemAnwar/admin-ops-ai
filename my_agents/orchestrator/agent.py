@@ -1,4 +1,5 @@
 import asyncio
+import json as _json
 import re
 from datetime import date
 
@@ -335,9 +336,9 @@ async def stream_chat(user_input: str, session_id: str = "default"):
             async for event in result.stream_events():
                 if event.type == "raw_response_event" and isinstance(event.data, ResponseTextDeltaEvent):
                     if event.data.delta:
-                        yield f"data: {event.data.delta}\n\n"
+                        yield f"data: {_json.dumps(event.data.delta)}\n\n"
 
-            yield f"data: [DONE]\n\n"
+            yield f"data: {_json.dumps('[DONE]')}\n\n"
             track_usage(session_id, model_name, user_input, str(result.final_output)[:200])
             await memory.compact_if_needed()
             items = await memory.session.get_items()
@@ -348,7 +349,7 @@ async def stream_chat(user_input: str, session_id: str = "default"):
             await memory.session.add_items([{"role": "assistant", "content": msg}])
             items = await memory.session.get_items()
             ConversationMemory.save_to_db(session_id, items)
-            yield f"data: {msg}\n\ndata: [DONE]\n\n"
+            yield f"data: {_json.dumps(msg)}\n\ndata: {_json.dumps('[DONE]')}\n\n"
             return
         except (RateLimitError, APIStatusError) as e:
             msg = str(e)
@@ -356,11 +357,11 @@ async def stream_chat(user_input: str, session_id: str = "default"):
                 _memories.pop(session_id, None)
                 await memory.delete()
                 ConversationMemory.delete_from_db(session_id)
-                yield f"data: Memory corrupted — delete kar di. Dobara try karein.\n\ndata: [DONE]\n\n"
+                yield f"data: {_json.dumps('Memory corrupted — delete kar di. Dobara try karein.')}\n\ndata: {_json.dumps('[DONE]')}\n\n"
                 return
             if attempt == len(fallback_chain) - 1:
-                yield f"data: ⚠️ {model_name}: {e}\n\ndata: [DONE]\n\n"
+                yield f"data: {_json.dumps(f'⚠️ {model_name}: {e}')}\n\ndata: {_json.dumps('[DONE]')}\n\n"
                 return
             continue
 
-    yield f"data: ⚠️ Sab models fail ho gaye.\n\ndata: [DONE]\n\n"
+    yield f"data: {_json.dumps('⚠️ Sab models fail ho gaye.')}\n\ndata: {_json.dumps('[DONE]')}\n\n"

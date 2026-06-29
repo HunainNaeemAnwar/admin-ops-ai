@@ -110,7 +110,6 @@ def render_pdf_payslip(data: dict, worker: str, year: int, month: int) -> str:
     product_totals = data.get("product_totals", {})
     product_rates = data.get("product_rates", {})
     rejection_share = data.get("worker_rejection_share", {})
-    has_rejections = any(rejection_share.values())
     all_codes = sorted(set(list(product_totals.keys()) + list(rejection_share.keys())))
 
     # ── HEADER BAR (Worker Name) ──
@@ -132,22 +131,6 @@ def render_pdf_payslip(data: dict, worker: str, year: int, month: int) -> str:
     sub_style = ParagraphStyle("Sub", alignment=1, fontSize=11, leading=14, textColor=colors.Color(0.4, 0.4, 0.4), fontName=FONT_NAME)
     elements.append(Paragraph(f"{_format_month(month)} {year}", sub_style))
     elements.append(Spacer(1, 10 * mm))
-
-    # ── REJECTIONS (conditional) ──
-    if has_rejections:
-        elements.append(_section_heading("REJECTIONS"))
-        elements.append(Spacer(1, SECTION_GAP))
-        rej_data = [
-            [_p("Product", size=10, bold=True, color=WHITE), _p("Rejected Qty", size=10, bold=True, color=WHITE)],
-        ]
-        for code in all_codes:
-            share = rejection_share.get(code, 0)
-            if share > 0:
-                rej_data.append([_p(code, size=10), _p(str(share), size=10)])
-        rej_table = Table(rej_data, colWidths=[90 * mm, 90 * mm])
-        rej_table.setStyle(_make_table_style(len(rej_data)))
-        elements.append(rej_table)
-        elements.append(Spacer(1, TABLE_GAP))
 
     # ── PRODUCTION SUMMARY ──
     elements.append(_section_heading("PRODUCTION SUMMARY"))

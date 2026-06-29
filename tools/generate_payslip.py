@@ -10,7 +10,7 @@ from services.database import (
     get_payslip, save_payslip,
 )
 from services.production_tools import get_product_info
-from services.rejection_tools import get_rejection_distribution
+from services.rejection_tools import get_distribution_for_month
 from services.payslip_tools import generate_pdf_payslip
 
 
@@ -32,7 +32,7 @@ def generate_payslip_tool(year: int, month: int, worker: Optional[str] = None) -
     if y < 2026:
         return "⚠️ Payslips only available from 2026 onwards."
 
-    distribution = get_rejection_distribution(y, m)
+    distribution = get_distribution_for_month(y, m)
 
     if worker:
         workers_list = [worker]
@@ -78,19 +78,14 @@ def generate_payslip_tool(year: int, month: int, worker: Optional[str] = None) -
         tax_amount = round(tax_total, 2)
         net_payable = round(gross_total - rejection_value - advance_total - tax_amount, 2)
 
-        existing_payslip = get_payslip(wid, y, m)
-        if existing_payslip:
-            results.append(
-                f"  ⚠️ {w}: {y}-{m:02d} payslip already exists (Rs {existing_payslip['net_payable']:,.0f}). "
-                f"Regenerate to overwrite."
-            )
-            continue
+        existing = get_payslip(wid, y, m)
 
         save_payslip(wid, y, m, gross_total, tax_amount, rejection_value, advance_total, net_payable)
         generate_pdf_payslip(w, y, m)
 
+        label = "Regenerated" if existing else "Generated"
         results.append(
-            f"  {w}: {y}-{m:02d} payslip ready — "
+            f"  {w}: {y}-{m:02d} payslip {label} — "
             f"Gross Rs {gross_total:,.0f}, "
             f"Net Rs {net_payable:,.0f}"
         )

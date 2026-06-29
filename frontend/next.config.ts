@@ -10,8 +10,20 @@ const nextConfig: NextConfig = {
         destination: `${backend}/api/:path*`,
       },
       {
-        source: "/admin/:path*",
-        destination: `${backend}/admin/:path*`,
+        source: "/admin/login",
+        destination: `${backend}/admin/login`,
+      },
+      {
+        source: "/admin/logout",
+        destination: `${backend}/admin/logout`,
+      },
+      {
+        source: "/admin/monthly/excel",
+        destination: `${backend}/admin/monthly/excel`,
+      },
+      {
+        source: "/admin/payslip/pdf/:worker/:year/:month",
+        destination: `${backend}/admin/payslip/pdf/:worker/:year/:month`,
       },
     ];
   },

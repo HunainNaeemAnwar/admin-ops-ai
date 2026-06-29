@@ -1,45 +1,35 @@
-from pathlib import Path
-
 from services.production_tools import log_production_json
-from services.export_tools import generate_excel_report
+from services.export_tools import generate_daily_excel_stream, generate_weekly_excel_stream, generate_monthly_excel_stream
 from services.payslip_tools import generate_pdf_payslip
-from services.database import get_worker_id, get_worker_month_production
 from services.rejection_tools import log_rejection
 from services.advance_tools import record_advance
 
 
-class TestGenerateExcelReport:
-    def test_daily_report_creates_file(self):
+class TestGenerateExcelStream:
+    def test_daily_stream_returns_bytesio(self):
         log_production_json('[{"worker":"Kaleem","product_code":"NUT","quantity":300}]')
         log_production_json('[{"worker":"Naeem","product_code":"10*20","quantity":150}]')
         from datetime import date
         today = date.today()
-        path = generate_excel_report("daily", today.year, today.month, today.day)
-        assert path is not None
-        assert Path(path).exists()
-        Path(path).unlink()
+        buf, filename = generate_daily_excel_stream(today.year, today.month, today.day)
+        assert buf is not None
+        assert buf.read(4) == b"PK\x03\x04"
 
-    def test_weekly_report_creates_file(self):
+    def test_weekly_stream_returns_bytesio(self):
         log_production_json('[{"worker":"Kaleem","product_code":"NUT","quantity":300}]')
         from datetime import date
         today = date.today()
-        path = generate_excel_report("weekly", today.year, today.month, today.day)
-        assert path is not None
-        assert Path(path).exists()
-        Path(path).unlink()
+        buf, filename = generate_weekly_excel_stream(today.year, today.month, today.day)
+        assert buf is not None
+        assert buf.read(4) == b"PK\x03\x04"
 
-    def test_monthly_report_creates_file(self):
+    def test_monthly_stream_returns_bytesio(self):
         log_production_json('[{"worker":"Kaleem","product_code":"NUT","quantity":300}]')
         from datetime import date
         today = date.today()
-        path = generate_excel_report("monthly", today.year, today.month)
-        assert path is not None
-        assert Path(path).exists()
-        Path(path).unlink()
-
-    def test_invalid_period(self):
-        result = generate_excel_report("yearly")
-        assert "Unknown period" in result
+        buf, filename = generate_monthly_excel_stream(today.year, today.month)
+        assert buf is not None
+        assert buf.read(4) == b"PK\x03\x04"
 
 
 class TestPayslipGeneration:
@@ -51,9 +41,10 @@ class TestPayslipGeneration:
         today = date.today()
         path = generate_pdf_payslip("Kaleem", today.year, today.month)
         assert path is not None
+        from pathlib import Path
         assert Path(path).exists()
         Path(path).unlink()
 
     def test_payslip_no_data(self):
         path = generate_pdf_payslip("UnknownWorker", 2026, 6)
-        assert path is None or "No data" in str(path) if isinstance(path, str) else True
+        assert "No data" in str(path) if isinstance(path, str) else True
