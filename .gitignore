@@ -33,6 +33,8 @@ data/daily_logs/
 data/tokens/
 data/pay_slips/
 data/admin_ops.db
+data/admin_ops.db-shm
+data/admin_ops.db-wal
 data/agent_memory/
 data/product_catalog.xlsx
 

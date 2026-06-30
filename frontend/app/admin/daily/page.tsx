@@ -115,12 +115,7 @@ export default function DailyReportPage() {
             type="date"
             value={dateStr}
             onChange={(e) => setDateStr(e.target.value)}
-            className="w-full rounded-lg border-2 px-3 py-2.5 text-sm font-medium transition-colors focus:outline-none"
-            style={{
-              borderColor: "var(--color-border)",
-              background: "var(--color-surface)",
-              color: "var(--color-foreground)",
-            }}
+            className="input-base"
           />
         </div>
         <button
